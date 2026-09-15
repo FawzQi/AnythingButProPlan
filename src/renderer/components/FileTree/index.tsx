@@ -1,25 +1,33 @@
-import { useMemo } from 'react'
-import type { ReactElement } from 'react'
-import { FixedSizeList, type ListChildComponentProps } from 'react-window'
-import { useAppStore } from '../../stores/app-store'
-import { useElementSize } from '../../lib/hooks'
-import { flattenTree, type TreeRow } from '../../lib/tree'
-import { Button, Panel } from '../../lib/ui'
+import { useMemo } from "react";
+import type { ReactElement } from "react";
+import { FixedSizeList, type ListChildComponentProps } from "react-window";
+import { useAppStore } from "../../stores/app-store";
+import { useElementSize } from "../../lib/hooks";
+import { flattenTree, type TreeRow } from "../../lib/tree";
+import { Button, Panel } from "../../lib/ui";
 
-const ROW_HEIGHT = 24
+const ROW_HEIGHT = 24;
+
+// Compact overrides so the header's five controls fit inside the 340px panel.
+// The base Button padding is meant for roomier contexts.
+const COMPACT = "px-2 py-0.5 text-xs";
 
 interface RowData {
-  rows: TreeRow[]
-  onToggle: (id: string, selected: boolean) => void
-  onExpand: (id: string) => void
+  rows: TreeRow[];
+  onToggle: (id: string, selected: boolean) => void;
+  onExpand: (id: string) => void;
 }
 
-function Row({ index, style, data }: ListChildComponentProps<RowData>): ReactElement {
-  const { rows, onToggle, onExpand } = data
-  const row = rows[index]
-  if (!row) return <div style={style} />
-  const { node, depth } = row
-  const isDirectory = node.type === 'directory'
+function Row({
+  index,
+  style,
+  data,
+}: ListChildComponentProps<RowData>): ReactElement {
+  const { rows, onToggle, onExpand } = data;
+  const row = rows[index];
+  if (!row) return <div style={style} />;
+  const { node, depth } = row;
+  const isDirectory = node.type === "directory";
 
   return (
     <div
@@ -32,9 +40,9 @@ function Row({ index, style, data }: ListChildComponentProps<RowData>): ReactEle
           type="button"
           onClick={() => onExpand(node.id)}
           className="w-3 shrink-0 text-slate-400 hover:text-slate-100"
-          aria-label={node.expanded ? 'Collapse' : 'Expand'}
+          aria-label={node.expanded ? "Collapse" : "Expand"}
         >
-          {node.expanded ? '▾' : '▸'}
+          {node.expanded ? "▾" : "▸"}
         </button>
       ) : (
         <span className="w-3 shrink-0" />
@@ -48,30 +56,32 @@ function Row({ index, style, data }: ListChildComponentProps<RowData>): ReactEle
       />
 
       <span
-        className={`truncate ${isDirectory ? 'font-medium text-slate-300' : 'text-slate-400'}`}
+        className={`truncate ${isDirectory ? "font-medium text-slate-300" : "text-slate-400"}`}
       >
         {node.name}
       </span>
     </div>
-  )
+  );
 }
 
 export function FileTree(): ReactElement {
-  const tree = useAppStore((state) => state.tree)
-  const projectRoot = useAppStore((state) => state.projectRoot)
-  const scanning = useAppStore((state) => state.scanning)
-  const openProject = useAppStore((state) => state.openProject)
-  const toggleNode = useAppStore((state) => state.toggleNode)
-  const toggleExpanded = useAppStore((state) => state.toggleExpanded)
-  const selectAll = useAppStore((state) => state.selectAll)
+  const tree = useAppStore((state) => state.tree);
+  const projectRoot = useAppStore((state) => state.projectRoot);
+  const scanning = useAppStore((state) => state.scanning);
+  const openProject = useAppStore((state) => state.openProject);
+  const refreshProject = useAppStore((state) => state.refreshProject);
+  const openTerminal = useAppStore((state) => state.openTerminal);
+  const toggleNode = useAppStore((state) => state.toggleNode);
+  const toggleExpanded = useAppStore((state) => state.toggleExpanded);
+  const selectAll = useAppStore((state) => state.selectAll);
 
-  const [containerRef, size] = useElementSize<HTMLDivElement>()
-  const rows = useMemo(() => (tree ? flattenTree(tree) : []), [tree])
+  const [containerRef, size] = useElementSize<HTMLDivElement>();
+  const rows = useMemo(() => (tree ? flattenTree(tree) : []), [tree]);
 
   const itemData = useMemo<RowData>(
     () => ({ rows, onToggle: toggleNode, onExpand: toggleExpanded }),
     [rows, toggleNode, toggleExpanded],
-  )
+  );
 
   return (
     <Panel
@@ -79,21 +89,65 @@ export function FileTree(): ReactElement {
       className="w-[340px] shrink-0 border-r"
       actions={
         <>
-          <Button variant="ghost" onClick={() => selectAll(true)} disabled={!tree}>
+          <Button
+            variant="ghost"
+            className={COMPACT}
+            onClick={() => selectAll(true)}
+            disabled={!tree}
+            title="Select all files"
+          >
             All
           </Button>
-          <Button variant="ghost" onClick={() => selectAll(false)} disabled={!tree}>
+          <Button
+            variant="ghost"
+            className={COMPACT}
+            onClick={() => selectAll(false)}
+            disabled={!tree}
+            title="Deselect all files"
+          >
             None
           </Button>
-          <Button variant="primary" onClick={() => void openProject()} disabled={scanning}>
-            {scanning ? 'Scanning…' : 'Open folder'}
+          <Button
+            variant="ghost"
+            className={COMPACT}
+            onClick={() => void refreshProject()}
+            disabled={!projectRoot || scanning}
+            title={
+              projectRoot ? "Re-scan the opened folder" : "Open a folder first"
+            }
+            aria-label="Refresh project tree"
+          >
+            {scanning ? "…" : "↻"}
+          </Button>
+          <Button
+            variant="ghost"
+            className={COMPACT}
+            onClick={() => void openTerminal()}
+            disabled={!projectRoot}
+            title={
+              projectRoot
+                ? `Open a terminal at ${projectRoot}`
+                : "Open a folder first"
+            }
+            aria-label="Open terminal at project root"
+          >
+            &gt;_
+          </Button>
+          <Button
+            variant="primary"
+            className={COMPACT}
+            onClick={() => void openProject()}
+            disabled={scanning}
+            title="Open a different project folder"
+          >
+            {scanning ? "Scanning…" : "Open folder"}
           </Button>
         </>
       }
     >
       <div className="flex h-full flex-col">
         <div className="truncate border-b border-[#2c3038] px-3 py-1.5 text-xs text-slate-500">
-          {projectRoot ?? 'No folder opened'}
+          {projectRoot ?? "No folder opened"}
         </div>
         <div ref={containerRef} className="min-h-0 flex-1">
           {rows.length > 0 && size.height > 0 ? (
@@ -108,11 +162,13 @@ export function FileTree(): ReactElement {
             </FixedSizeList>
           ) : (
             <p className="p-3 text-xs text-slate-500">
-              {tree ? 'No promptable files found.' : 'Open a project folder to begin.'}
+              {tree
+                ? "No promptable files found."
+                : "Open a project folder to begin."}
             </p>
           )}
         </div>
       </div>
     </Panel>
-  )
+  );
 }

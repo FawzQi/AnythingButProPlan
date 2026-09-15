@@ -60,10 +60,13 @@ export function Panel({
   className?: string
 }): ReactNode {
   return (
-    <section className={`flex min-h-0 flex-col border-[#2c3038] ${className}`}>
-      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-[#2c3038] px-3 py-2">
-        <h2 className="text-xs font-semibold tracking-wide text-slate-400 uppercase">{title}</h2>
-        <div className="flex items-center gap-2">{actions}</div>
+    <section className={`flex min-h-0 flex-col overflow-hidden border-[#2c3038] ${className}`}>
+      <header className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-[#2c3038] px-3 py-2">
+        <h2 className="shrink-0 text-xs font-semibold tracking-wide text-slate-400 uppercase">{title}</h2>
+        {/* `ml-auto` right-aligns the actions both on the same line as the
+            title and on its own wrapped line, which `justify-between` cannot
+            do once flex-wrap splits the two into separate rows. */}
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5">{actions}</div>
       </header>
       <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
     </section>

@@ -15,11 +15,44 @@
 ```
 
 {{/each}}
+
 ## Output Instructions
 
-Reply with one section per file that needs to change, and nothing else. Each
-section is a line reading `File: <path>` holding the project-relative path,
-followed by a fenced code block containing that file's complete contents. Use
-the same language tag as above. No conversational text before, between, or
-after the sections. Never use line numbers or partial snippets — always emit
-the whole file.
+Reply using exactly the three sections below, in this order, and nothing else.
+
+### Section 1 — Files
+
+One entry per file that needs to change. Each entry is:
+
+- A line reading `File: <path>` holding the project-relative path.
+- A fenced code block containing that file's **complete** contents.
+- Use the same language tag as shown in the context above.
+
+Rules:
+- Never use line numbers or partial snippets. Always emit the whole file.
+- Do not add prose between file entries.
+- If a file is unchanged, do not include it.
+
+### Section 2 — Explanation
+
+After all file entries, write a heading exactly as `## Explanation`.
+
+Under it, briefly explain in plain prose:
+- What was added, removed, or changed in each file.
+- Why the change was made (the reasoning, not a restatement of the diff).
+
+If there is nothing to explain, write `## Explanation` followed by the single word `None`.
+
+### Section 3 — Debug
+
+After the explanation, write a heading exactly as `## Debug`.
+
+Under it, if the user needs to run commands to verify or reproduce the change, list them as fenced code blocks with the appropriate language tag (e.g. `bash`, `powershell`, `sh`). Each command block must be prefixed by a one-line description of what it does.
+
+If there are no debug commands, write `## Debug` followed by the single word `None`.
+
+### Hard constraints
+
+- No conversational text before `File:` entries, between them, or after `## Debug`.
+- The `## Explanation` and `## Debug` headings are **mandatory** — always emit both, even when their content is `None`.
+- Never put a `File:` line inside the Explanation or Debug sections.

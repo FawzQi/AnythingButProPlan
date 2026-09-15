@@ -39,6 +39,8 @@ interface AppState {
   error: string | null;
 
   openProject: () => Promise<void>;
+  refreshProject: () => Promise<void>;
+  openTerminal: () => Promise<void>;
   toggleNode: (id: string, selected: boolean) => void;
   toggleExpanded: (id: string) => void;
   selectAll: (selected: boolean) => void;
@@ -50,6 +52,19 @@ interface AppState {
   toggleInclude: (key: string, included: boolean) => void;
   applySelected: () => Promise<void>;
   clearNotice: () => void;
+}
+
+/**
+ * Re-apply a set of previously-selected file paths to a freshly-scanned tree.
+ * Paths that no longer exist are silently dropped; directories are left alone
+ * so the user's expansion state survives the refresh.
+ */
+function restoreSelection(node: FileNode, selectedPaths: Set<string>): FileNode {
+  if (node.type === "file") {
+    return { ...node, selected: selectedPaths.has(node.path) };
+  }
+  if (!node.children) return node;
+  return { ...node, children: node.children.map((child) => restoreSelection(child, selectedPaths)) };
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -92,6 +107,39 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
     } catch (error) {
       set({ scanning: false, error: message(error) });
+    }
+  },
+
+  refreshProject: async () => {
+    const { projectRoot, tree } = get();
+    if (!projectRoot) return;
+    // Snapshot the current selection before the tree is replaced so a refresh
+    // does not silently deselect everything the user had ticked.
+    const previouslySelected = tree ? collectSelectedPaths(tree) : [];
+    try {
+      set({ scanning: true, error: null });
+      const scan = await window.LARPGent.scanDirectory(projectRoot);
+      const restored =
+        previouslySelected.length > 0
+          ? restoreSelection(scan.tree, new Set(previouslySelected))
+          : scan.tree;
+      set({
+        tree: restored,
+        fileCount: scan.fileCount,
+        scanning: false,
+      });
+    } catch (error) {
+      set({ scanning: false, error: message(error) });
+    }
+  },
+
+  openTerminal: async () => {
+    const projectRoot = get().projectRoot;
+    if (!projectRoot) return;
+    try {
+      await window.LARPGent.openTerminal(projectRoot);
+    } catch (error) {
+      set({ error: message(error) });
     }
   },
 

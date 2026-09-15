@@ -13,6 +13,7 @@ export const IpcChannel = {
   ApplyFiles: 'fs:apply-files',
   SavePrompt: 'fs:save-prompt',
   CopyText: 'clipboard:write',
+  OpenTerminal: 'shell:open-terminal',
 } as const
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel]

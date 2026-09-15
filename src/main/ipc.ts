@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import { BrowserWindow, clipboard, dialog, ipcMain } from 'electron'
 import { IpcChannel } from '@shared/ipc-channels'
 import type {
@@ -20,6 +21,41 @@ function requireString(value: unknown, label: string): string {
     throw new Error(`Invalid ${label}: expected a non-empty string.`)
   }
   return value
+}
+
+/**
+ * Launch the platform's terminal emulator in `cwd`. Detached + unref so the
+ * child outlives this process — a terminal the user opened should stay open
+ * after the app quits.
+ */
+function openTerminalAt(cwd: string): void {
+  const platform = process.platform
+
+  let command: string
+  let args: string[]
+
+  if (platform === 'win32') {
+    // `start` needs an explicit title argument, else a quoted first argument
+    // is interpreted as the window title instead of the program.
+    command = 'cmd'
+    args = ['/c', 'start', '', 'cmd', '/K', `cd /d "${cwd}"`]
+  } else if (platform === 'darwin') {
+    command = 'open'
+    args = ['-a', 'Terminal', cwd]
+  } else {
+    // Linux/BSD: x-terminal-emulator is the Debian alternatives entry point
+    // and is present on most desktops that ship a terminal.
+    command = 'x-terminal-emulator'
+    args = [`--working-directory=${cwd}`]
+  }
+
+  const child = spawn(command, args, { detached: true, stdio: 'ignore' })
+  child.on('error', (error) => {
+    // Swallowed intentionally: the child is detached and we have no channel
+    // back to the renderer for this fire-and-forget action.
+    console.error(`Failed to open terminal at ${cwd}:`, error)
+  })
+  child.unref()
 }
 
 /**
@@ -103,5 +139,9 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IpcChannel.ParseResponse, async (_event, raw: unknown): Promise<ParseResult> => {
     return parseResponse(typeof raw === 'string' ? raw : '')
+  })
+
+  ipcMain.handle(IpcChannel.OpenTerminal, async (_event, root: unknown): Promise<void> => {
+    openTerminalAt(requireString(root, 'root'))
   })
 }

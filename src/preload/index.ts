@@ -38,6 +38,8 @@ const api = {
     ipcRenderer.invoke(IpcChannel.SavePrompt, content, suggestedName),
   copyText: (text: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.CopyText, text),
+  openTerminal: (root: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.OpenTerminal, root),
 };
 
 export type LARPGentApi = typeof api;
