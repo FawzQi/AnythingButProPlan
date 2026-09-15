@@ -1,11 +1,11 @@
 import type { ParseResult, ParsedFile } from '@shared/types'
-import { extractCodeBlocks } from './markdown-parser'
+import { extractCodeBlocks, extractPlainBlocks } from './markdown-parser'
 import { parseXmlEnvelope } from './xml-parser'
 import { resolvePath } from './path-heuristics'
 import type { CodeBlock } from './types'
 
 export type { CodeBlock } from './types'
-export { extractCodeBlocks } from './markdown-parser'
+export { extractCodeBlocks, extractPlainBlocks } from './markdown-parser'
 export { parseXmlEnvelope } from './xml-parser'
 export { resolvePath, normalizePath } from './path-heuristics'
 
@@ -86,7 +86,28 @@ export function parseResponse(raw: string): ParseResult {
     )
   }
 
-  // Strategy 3 — hand everything to the user. Nothing resolved, so nothing is
+  // Strategy 3 — plaintext code blocks structured by File: paths without markdown fences
+  const plainBlocks = extractPlainBlocks(raw)
+  if (plainBlocks.length > 0) {
+    const usable: ParsedFile[] = []
+    let rejected = 0
+    for (const block of plainBlocks) {
+      const hint = resolvePath(block)
+      if (hint.path === null) {
+        rejected += 1
+        continue
+      }
+      usable.push(toParsedFile(block, hint.path, hint.source, false))
+    }
+    if (usable.length > 0) {
+      if (rejected > 0) {
+        warnings.push(`${rejected} plain text block(s) had a missing or unusable path and were dropped.`)
+      }
+      return { files: usable, strategy: 'plaintext', warnings }
+    }
+  }
+
+  // Strategy 4 — hand everything to the user. Nothing resolved, so nothing is
   // dropped: every block reaches the UI for the user to place by hand.
   if (blocks.length === 0) {
     warnings.push('No fenced code blocks found in the response.')

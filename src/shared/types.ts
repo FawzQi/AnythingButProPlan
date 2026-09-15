@@ -45,7 +45,7 @@ export interface ParsedFile {
   rawBlock: string
 }
 
-export type ParseStrategy = 'xml' | 'markdown' | 'user-assisted'
+export type ParseStrategy = 'xml' | 'markdown' | 'plaintext' | 'user-assisted'
 
 export interface ParseResult {
   files: ParsedFile[]

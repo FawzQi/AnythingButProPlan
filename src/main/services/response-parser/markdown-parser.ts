@@ -65,6 +65,80 @@ export function extractCodeBlocks(raw: string): CodeBlock[] {
   return blocks
 }
 
+/**
+ * Extract code blocks from a plaintext format with no markdown fences, modeled on:
+ * 
+ * File: (file path)
+ * 
+ * (language)
+ * 
+ * (full code)
+ */
+export function extractPlainBlocks(raw: string): CodeBlock[] {
+  const blocks: CodeBlock[] = []
+  const headerPattern = /^\s*File:\s*(.+?)\s*$/gm
+
+  let match = headerPattern.exec(raw)
+  while (match) {
+    const lineStart = match.index
+    const path = match[1]
+    const contentStart = lineStart + match[0].length
+
+    headerPattern.lastIndex = contentStart
+    const nextMatch = headerPattern.exec(raw)
+    const nextIndex = nextMatch ? nextMatch.index : raw.length
+    if (nextMatch) {
+      headerPattern.lastIndex = nextMatch.index
+    }
+
+    const chunk = raw.slice(contentStart, nextIndex)
+    const lines = chunk.split(/\r?\n/)
+    
+    let language: string | null = null
+    let codeStartIdx = 0
+    
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim()
+      if (trimmed === '') continue
+      // Check if this line looks like a language declaration
+      const langMatch = /^\(?([a-zA-Z0-9_+#-]+)\)?$/.exec(trimmed)
+      if (langMatch) {
+        language = langMatch[1]
+        codeStartIdx = i + 1
+      } else {
+        codeStartIdx = i
+      }
+      break
+    }
+    
+    // Trim blank lines at the top of the code
+    while (codeStartIdx < lines.length && lines[codeStartIdx].trim() === '') {
+      codeStartIdx++
+    }
+    
+    // Trim blank lines at the bottom of the code
+    let codeEndIdx = lines.length
+    while (codeEndIdx > codeStartIdx && lines[codeEndIdx - 1].trim() === '') {
+      codeEndIdx--
+    }
+    
+    const contentLines = lines.slice(codeStartIdx, codeEndIdx)
+    const content = contentLines.join('\n') + (contentLines.length > 0 ? '\n' : '')
+
+    blocks.push({
+      language,
+      content,
+      precedingText: `File: ${path}`,
+      rawBlock: raw.slice(lineStart, nextIndex),
+      startLine: countNewlines(raw, lineStart) + 1,
+    })
+    
+    match = nextMatch
+  }
+
+  return blocks
+}
+
 /** Drop the single line terminator that separates content from the closing fence. */
 function stripOneTerminator(text: string): string {
   if (text.endsWith('\r\n')) return text.slice(0, -2)
