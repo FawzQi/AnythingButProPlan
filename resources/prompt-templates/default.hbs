@@ -1,0 +1,25 @@
+# Codebase Context
+
+## Project Structure
+
+```
+{{tree}}
+```
+
+## Files
+
+{{#each files}}File: {{path}}
+
+```{{language}}
+{{{content}}}
+```
+
+{{/each}}
+## Output Instructions
+
+Reply with one section per file that needs to change, and nothing else. Each
+section is a line reading `File: <path>` holding the project-relative path,
+followed by a fenced code block containing that file's complete contents. Use
+the same language tag as above. No conversational text before, between, or
+after the sections. Never use line numbers or partial snippets — always emit
+the whole file.

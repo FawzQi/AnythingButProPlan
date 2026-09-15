@@ -1,0 +1,12 @@
+Sure! Here is the updated function:
+
+```typescript
+export const app = (): number => 42
+export const other = (): number => 43
+```
+
+You will also want to update the helper:
+
+```typescript
+export const helper = (): number => 42
+```

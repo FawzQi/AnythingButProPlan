@@ -1,0 +1,28 @@
+Here is what I changed.
+
+File: src/load_scanner_sim/scripts/truck_controller.py
+
+```python
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+```
+
+## File: src/app.ts
+
+```typescript
+export const app = (): number => 42
+```
+
+Here is the tree of the result, for reference:
+
+```
+src
+└── app.ts
+```
+
+**File:** `src/utils/helper.ts`
+
+```typescript
+export const helper = (): number => 42
+```

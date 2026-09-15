@@ -1,0 +1,16 @@
+<file path="src/app.ts">
+
+```typescript
+import { helper } from './utils/helper'
+
+export const app = (): number => helper() + 1
+```
+
+</file>
+<file path="src/utils/helper.ts">
+
+```typescript
+export const helper = (): number => 41
+```
+
+</file>

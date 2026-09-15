@@ -1,0 +1,33 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-surface: #16181d;
+  --color-surface-2: #1e2127;
+  --color-edge: #2c3038;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: var(--color-surface);
+  color: #e6e8eb;
+  color-scheme: dark;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #3a3f48;
+  border-radius: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

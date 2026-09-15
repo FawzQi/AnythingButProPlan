@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build and distribution outputs
+out/
+dist/
+release/
+
+# Graphify analysis outputs
+graphify-out/
+.graphify*
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testing & Coverage
+test-results/
+playwright-report/
+coverage/
+.nyc_output/
+
+# Environment and local files
+.env
+.env.local
+.env.*.local
+*.local
+
+# IDE and System files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo

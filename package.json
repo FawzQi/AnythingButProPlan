@@ -1,0 +1,78 @@
+{
+  "name": "LARPGent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Codebase <-> AI bridge: generate prompts from a project, parse AI responses back into files.",
+  "main": "./out/main/index.js",
+  "author": "LARPGent <maintainer@example.com>",
+  "homepage": "https://example.com/LARPGent",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "lint": "eslint .",
+    "package:win": "electron-vite build && electron-builder --win",
+    "package:linux": "electron-vite build && electron-builder --linux"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@monaco-editor/react": "^4.7.0",
+    "@playwright/test": "^1.63.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/react-window": "^1.8.8",
+    "@types/sanitize-filename": "^1.6.3",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.0.0",
+    "electron-vite": "^5.0.0",
+    "eslint": "^10.10.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "fast-xml-parser": "^5.11.1",
+    "gpt-tokenizer": "^4.0.0",
+    "handlebars": "^4.7.8",
+    "ignore": "^7.0.9",
+    "monaco-editor": "^0.56.0",
+    "react": "^19.0.0",
+    "react-diff-viewer-continued": "^4.4.0",
+    "react-dom": "^19.0.0",
+    "react-window": "^1.8.11",
+    "sanitize-filename": "^1.6.4",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.70.0",
+    "vite": "^7.0.0",
+    "vitest": "^5.0.0",
+    "zustand": "^5.0.15"
+  },
+  "build": {
+    "appId": "dev.LARPGent.app",
+    "productName": "LARPGent",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "maintainer": "LARPGent <maintainer@example.com>"
+    }
+  }
+}

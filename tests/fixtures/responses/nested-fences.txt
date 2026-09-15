@@ -1,0 +1,17 @@
+Here is the README update. Note the inner fences — they are part of the file.
+
+`docs/README.md`:
+
+````markdown
+# Project
+
+Install it:
+
+```bash
+npm install
+```
+
+Then run it.
+````
+
+That's all.

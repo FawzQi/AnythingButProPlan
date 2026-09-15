@@ -1,0 +1,13 @@
+Here is the fix for the off-by-one error.
+
+```typescript
+// File: src/app.ts
+export const app = (): number => 42
+```
+
+And the helper needs the same treatment.
+
+```typescript
+// src/utils/helper.ts
+export const helper = (): number => 42
+```

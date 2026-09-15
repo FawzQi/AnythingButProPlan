@@ -1,0 +1,14 @@
+<file path="src\app.ts">
+
+```typescript
+export const app = (): number => 42
+```
+
+</file>
+<file path="src\utils\helper.ts">
+
+```typescript
+export const helper = (): number => 42
+```
+
+</file>

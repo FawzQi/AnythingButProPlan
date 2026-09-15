@@ -1,0 +1,8 @@
+I'll update the file for you.
+
+<file path="src/app.ts">
+
+```typescript
+// File: src/app.ts
+export const app = (): number => 42
+```
