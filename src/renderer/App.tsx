@@ -13,7 +13,7 @@ export default function App(): ReactElement {
   const clearNotice = useAppStore((state) => state.clearNotice);
 
   // Left panel: the divider sits to its right, so dragging right grows it.
-  const fileTree = useResizableWidth(370, { min: 180, max: 640, sign: 1 });
+  const fileTree = useResizableWidth(420, { min: 180, max: 640, sign: 1 });
   // Right panel: the divider sits to its left, so dragging right shrinks it.
   const response = useResizableWidth(560, { min: 320, max: 960, sign: -1 });
 

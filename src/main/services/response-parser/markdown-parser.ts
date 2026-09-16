@@ -5,6 +5,17 @@ import type { CodeBlock } from './types'
 const OPENING_FENCE = /^ {0,3}(`{3,}|~{3,})([^\r\n]*)/gm
 
 /**
+ * How many lines above an opening fence are scanned for a `File:` header.
+ *
+ * Sized to cover the output contract's own formatting (header line, blank
+ * line, fence) plus a couple of blank lines of drift the model sometimes
+ * adds. The window is intentionally not larger: `pathFromFileHeader` scans
+ * it closest-first, so a larger window cannot attribute a previous block's
+ * header to this one, but keeping it bounded keeps the read cheap.
+ */
+const PRECEDING_WINDOW = 6
+
+/**
  * Pull fenced code blocks out of a raw response with a line-based state machine.
  *
  * Deliberately NOT a markdown parser: we need raw content and exact fence
@@ -49,10 +60,16 @@ export function extractCodeBlocks(raw: string): CodeBlock[] {
     const before = raw.slice(0, lineStart).split(/\r?\n/)
     if (before[before.length - 1] === '') before.pop()
 
+    // `(typescript)` is drift some models emit for the info string; strip a
+    // balanced or unbalanced pair of parentheses so the language hint matches
+    // the LANGUAGE_EXTENSIONS table just like a bare `typescript` would.
+    const rawLanguage = info === '' ? null : (info.split(/\s+/)[0] ?? null)
+    const language = rawLanguage === null ? null : rawLanguage.replace(/^\(+/, '').replace(/\)+$/, '') || null
+
     blocks.push({
-      language: info === '' ? null : (info.split(/\s+/)[0] ?? null),
+      language,
       content,
-      precedingText: before.slice(-3).join('\n'),
+      precedingText: before.slice(-PRECEDING_WINDOW).join('\n'),
       rawBlock: raw.slice(lineStart, blockEnd),
       startLine: countNewlines(raw, lineStart) + 1,
     })

@@ -14,6 +14,7 @@ export const IpcChannel = {
   DiffFile: 'fs:diff-file',
   ApplyFiles: 'fs:apply-files',
   SavePrompt: 'fs:save-prompt',
+  CleanBackups: 'fs:clean-backups',
   CopyText: 'clipboard:write',
   OpenTerminal: 'shell:open-terminal',
 } as const

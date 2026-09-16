@@ -103,3 +103,12 @@ export interface WriteFileResult {
   status: 'created' | 'overwritten' | 'skipped'
   backupPath?: string
 }
+
+export interface CleanBackupsResult {
+  /** Number of .bak files removed from disk. */
+  deleted: number
+  /** POSIX-relative paths of the removed files, for reporting. */
+  paths: string[]
+  /** Files that could not be removed, with the reason. */
+  errors: Array<{ path: string; error: string }>
+}

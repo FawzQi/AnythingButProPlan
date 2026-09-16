@@ -106,12 +106,20 @@ function firstNonEmptyLine(content: string): string | null {
 }
 
 /**
- * Scan the lines above a fence for a `File: <path>` header. The whole
- * preceding window is scanned line by line — models often slip a sentence
- * between the header and the fence.
+ * Scan the lines above a fence for a `File: <path>` header, closest line
+ * first. The window can therefore be made larger without the risk of
+ * attributing an earlier block's header to this one: the nearest header
+ * always wins.
+ *
+ * The window is scanned line by line rather than with a single regex, since
+ * models often slip a blank line or a sentence between the header and the
+ * fence.
  */
 function pathFromFileHeader(text: string): string | null {
-  for (const line of text.split('\n')) {
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i]
+    if (line === undefined) continue
     const match = FILE_HEADER.exec(line)
     if (!match?.[1]) continue
     // `**File:** \`src/app.ts\`` is common drift; strip the emphasis marks

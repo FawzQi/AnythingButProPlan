@@ -5,6 +5,7 @@ import { IpcChannel } from '@shared/ipc-channels'
 import type {
   ApplyRequest,
   ApplyResult,
+  CleanBackupsResult,
   DiffRequest,
   DiffResult,
   ParseResult,
@@ -19,6 +20,7 @@ import {
   readTextFile,
   writeFileEnsuringDir,
   writeFileWithBackup,
+  cleanBackupFiles,
 } from './services/fs-service'
 import { buildPrompt } from './services/prompt-builder'
 import { applyFiles, computeDiff } from './services/apply-engine'
@@ -150,6 +152,13 @@ export function registerIpcHandlers(): void {
       if (result.canceled || !result.filePath) return null
       await writeFileEnsuringDir(result.filePath, requireString(content, 'content'))
       return result.filePath
+    },
+  )
+
+  ipcMain.handle(
+    IpcChannel.CleanBackups,
+    async (_event, root: unknown): Promise<CleanBackupsResult> => {
+      return cleanBackupFiles(requireString(root, 'root'))
     },
   )
 

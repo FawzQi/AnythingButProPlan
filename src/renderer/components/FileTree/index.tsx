@@ -8,7 +8,7 @@ import { Button, Panel } from "../../lib/ui";
 
 const ROW_HEIGHT = 24;
 
-// Compact overrides so the header's five controls fit inside the panel.
+// Compact overrides so the header's controls fit inside the panel.
 // The base Button padding is meant for roomier contexts.
 const COMPACT = "px-2 py-0.5 text-xs";
 
@@ -75,6 +75,7 @@ export function FileTree({ width }: { width: number }): ReactElement {
   const tree = useAppStore((state) => state.tree);
   const projectRoot = useAppStore((state) => state.projectRoot);
   const scanning = useAppStore((state) => state.scanning);
+  const cleaning = useAppStore((state) => state.cleaning);
   const openProject = useAppStore((state) => state.openProject);
   const refreshProject = useAppStore((state) => state.refreshProject);
   const openTerminal = useAppStore((state) => state.openTerminal);
@@ -82,6 +83,7 @@ export function FileTree({ width }: { width: number }): ReactElement {
   const toggleExpanded = useAppStore((state) => state.toggleExpanded);
   const selectAll = useAppStore((state) => state.selectAll);
   const openFileForEdit = useAppStore((state) => state.openFileForEdit);
+  const cleanBackups = useAppStore((state) => state.cleanBackups);
 
   const [containerRef, size] = useElementSize<HTMLDivElement>();
   const rows = useMemo(() => (tree ? flattenTree(tree) : []), [tree]);
@@ -146,6 +148,20 @@ export function FileTree({ width }: { width: number }): ReactElement {
             aria-label="Open terminal at project root"
           >
             &gt;_
+          </Button>
+          <Button
+            variant="ghost"
+            className={COMPACT}
+            onClick={() => void cleanBackups()}
+            disabled={!projectRoot || cleaning}
+            title={
+              projectRoot
+                ? "Delete every .bak backup file LARPGent created under this project"
+                : "Open a folder first"
+            }
+            aria-label="Delete .bak backup files"
+          >
+            {cleaning ? "…" : "🗑"}
           </Button>
           <Button
             variant="primary"

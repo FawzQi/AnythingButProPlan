@@ -3,6 +3,7 @@ import { IpcChannel } from "@shared/ipc-channels";
 import type {
   ApplyRequest,
   ApplyResult,
+  CleanBackupsResult,
   DiffRequest,
   DiffResult,
   ParseResult,
@@ -42,6 +43,8 @@ const api = {
     suggestedName: string,
   ): Promise<string | null> =>
     ipcRenderer.invoke(IpcChannel.SavePrompt, content, suggestedName),
+  cleanBackups: (root: string): Promise<CleanBackupsResult> =>
+    ipcRenderer.invoke(IpcChannel.CleanBackups, root),
   copyText: (text: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.CopyText, text),
   openTerminal: (root: string): Promise<void> =>

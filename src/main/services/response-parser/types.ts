@@ -5,7 +5,12 @@ export interface CodeBlock {
   language: string | null
   /** Raw text between the fences. Never trimmed. */
   content: string
-  /** Up to 3 lines immediately preceding the opening fence, joined with \n. */
+  /**
+   * Lines immediately preceding the opening fence, joined with \n. The window
+   * is sized so a `File: <path>` header separated from the fence by a blank
+   * line (or two) is still inside it; see `PRECEDING_WINDOW` in the markdown
+   * parser for the exact count.
+   */
   precedingText: string
   /** Original text from the opening fence line through the closing fence line. */
   rawBlock: string

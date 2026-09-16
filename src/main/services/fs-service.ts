@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import ignore, { type Ignore } from 'ignore'
 import sanitizeFilename from 'sanitize-filename'
-import type { FileNode, ScanResult } from '@shared/types'
+import type { CleanBackupsResult, FileNode, ScanResult } from '@shared/types'
 
 /** Directories that are never worth prompting over. */
 const ALWAYS_SKIP = new Set([
@@ -29,6 +29,18 @@ const BINARY_EXTENSIONS = new Set([
   '.wasm', '.bin', '.dat', '.db', '.sqlite', '.sqlite3', '.woff', '.woff2',
   '.ttf', '.otf', '.eot', '.psd', '.ai', '.sketch', '.blend', '.lockb',
 ])
+
+/**
+ * Backup files written by `writeFileWithBackup`: `<name>.bak`, or
+ * `<name>.bak.<timestamp>` when a plain `.bak` already existed. Both are our
+ * own artifacts — the tree hides them and the "clean backups" action removes
+ * them, so the pattern lives in one place.
+ */
+const BACKUP_FILE = /\.bak(?:\.[0-9T]+)?$/i
+
+export function isBackupFileName(name: string): boolean {
+  return BACKUP_FILE.test(name)
+}
 
 export function toPosix(value: string): string {
   return value.split(path.sep).join('/')
@@ -144,6 +156,9 @@ async function walk(absoluteDir: string, relativeDir: string, state: WalkState):
       state.skippedCount += 1
       continue
     }
+    // Our own `.bak` artifacts are intentionally invisible in the tree. They
+    // are not user-selectable content and would only clutter a prompt.
+    if (isBackupFileName(entry.name)) continue
     if (await isBinaryFile(absolute)) {
       state.skippedCount += 1
       continue
@@ -285,4 +300,59 @@ export async function writeFileWithBackup(
   return backupPath === undefined
     ? { status: 'created' }
     : { status: 'overwritten', backupPath }
+}
+
+/**
+ * Delete every `.bak` backup file under `root` that this app generated. The
+ * same skip list and .gitignore rules that govern scanning apply here: a
+ * backup hidden inside `node_modules/` or an ignored directory is left alone.
+ *
+ * Failures per file are collected rather than thrown — one locked file must
+ * not abort the whole sweep.
+ */
+export async function cleanBackupFiles(root: string): Promise<CleanBackupsResult> {
+  const absoluteRoot = path.resolve(root)
+  const matcher = await loadGitignore(absoluteRoot)
+  const paths: string[] = []
+  const errors: Array<{ path: string; error: string }> = []
+
+  const visit = async (absoluteDir: string, relativeDir: string): Promise<void> => {
+    let entries: import('node:fs').Dirent[]
+    try {
+      entries = await fs.readdir(absoluteDir, { withFileTypes: true })
+    } catch {
+      return
+    }
+
+    for (const entry of entries) {
+      const relative = relativeDir === '' ? entry.name : `${relativeDir}/${entry.name}`
+      const absolute = path.join(absoluteDir, entry.name)
+      const posixRelative = toPosix(relative)
+
+      if (entry.isSymbolicLink()) continue
+
+      if (entry.isDirectory()) {
+        if (ALWAYS_SKIP.has(entry.name) || matcher.ignores(`${posixRelative}/`)) continue
+        await visit(absolute, relative)
+        continue
+      }
+
+      if (!entry.isFile()) continue
+      if (matcher.ignores(posixRelative)) continue
+      if (!isBackupFileName(entry.name)) continue
+
+      try {
+        await fs.unlink(absolute)
+        paths.push(posixRelative)
+      } catch (error) {
+        errors.push({
+          path: posixRelative,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+  }
+
+  await visit(absoluteRoot, '')
+  return { deleted: paths.length, paths, errors }
 }
