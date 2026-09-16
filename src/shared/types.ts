@@ -92,3 +92,14 @@ export interface DiffResult {
   modified: string
   exists: boolean
 }
+
+export interface WriteFileRequest {
+  projectRoot: string
+  path: string
+  content: string
+}
+
+export interface WriteFileResult {
+  status: 'created' | 'overwritten' | 'skipped'
+  backupPath?: string
+}

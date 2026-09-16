@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from 'react'
 
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
 
@@ -53,14 +53,19 @@ export function Panel({
   actions,
   children,
   className = '',
+  style,
 }: {
   title: string
   actions?: ReactNode
   children: ReactNode
   className?: string
+  style?: CSSProperties
 }): ReactNode {
   return (
-    <section className={`flex min-h-0 flex-col overflow-hidden border-[#2c3038] ${className}`}>
+    <section
+      style={style}
+      className={`flex min-h-0 flex-col overflow-hidden border-[#2c3038] ${className}`}
+    >
       <header className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-[#2c3038] px-3 py-2">
         <h2 className="shrink-0 text-xs font-semibold tracking-wide text-slate-400 uppercase">{title}</h2>
         {/* `ml-auto` right-aligns the actions both on the same line as the
@@ -88,5 +93,27 @@ export function Banner({
   } as const
   return (
     <div className={`rounded border px-3 py-2 text-xs ${tones[tone]}`}>{children}</div>
+  )
+}
+
+/**
+ * Draggable divider between two resizable panels. Purely presentational: the
+ * parent owns the width state and supplies the mousedown handler.
+ */
+export function ResizeHandle({
+  onMouseDown,
+  label,
+}: {
+  onMouseDown: (event: React.MouseEvent<HTMLDivElement>) => void
+  label: string
+}): ReactNode {
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      onMouseDown={onMouseDown}
+      className="w-1 shrink-0 cursor-col-resize bg-[#2c3038] transition-colors hover:bg-sky-600 active:bg-sky-500"
+    />
   )
 }

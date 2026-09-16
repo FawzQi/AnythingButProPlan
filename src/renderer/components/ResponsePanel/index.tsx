@@ -15,7 +15,7 @@ const SOURCE_LABELS: Record<string, string> = {
   user: "You",
 };
 
-export function ResponsePanel(): ReactElement {
+export function ResponsePanel({ width }: { width: number }): ReactElement {
   const projectRoot = useAppStore((state) => state.projectRoot);
   const rawResponse = useAppStore((state) => state.rawResponse);
   const parseResult = useAppStore((state) => state.parseResult);
@@ -93,7 +93,8 @@ export function ResponsePanel(): ReactElement {
   return (
     <Panel
       title="AI Response"
-      className="w-[560px] shrink-0 border-l"
+      className="shrink-0 border-l"
+      style={{ width }}
       actions={
         <>
           <Button
@@ -117,7 +118,7 @@ export function ResponsePanel(): ReactElement {
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder="Paste the AI response here. It is parsed as you type — XML envelope first, then fenced code blocks."
+          placeholder="Paste the AI response here."
           spellCheck={false}
           className="h-40 shrink-0 resize-y border-b border-[#2c3038] bg-[#12141a] p-3 font-mono text-xs text-slate-200 outline-none"
         />

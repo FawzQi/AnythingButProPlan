@@ -10,11 +10,14 @@ import {
   setSubtreeSelected,
   updateNode,
 } from "../lib/tree";
+import { insertCustomPrompt } from "../lib/prompt";
 
 /** Stable key for a parsed file: ambiguous blocks have no path yet. */
 export function parsedFileKey(file: ParsedFile, index: number): string {
   return file.path ?? `#${index}`;
 }
+
+export type EditorTab = "prompt" | "editor";
 
 interface AppState {
   projectRoot: string | null;
@@ -27,6 +30,7 @@ interface AppState {
   promptFileCount: number;
   unreadable: string[];
   building: boolean;
+  customPrompt: string;
 
   rawResponse: string;
   parseResult: ParseResult | null;
@@ -34,6 +38,14 @@ interface AppState {
 
   applyResults: ApplyResult[] | null;
   applying: boolean;
+
+  // Single-file editor
+  editorTab: EditorTab;
+  editingPath: string | null;
+  editingContent: string;
+  editingOriginal: string;
+  editingLoading: boolean;
+  saving: boolean;
 
   notice: string | null;
   error: string | null;
@@ -47,10 +59,17 @@ interface AppState {
   buildPrompt: () => Promise<void>;
   copyPrompt: () => Promise<void>;
   savePrompt: () => Promise<void>;
+  setCustomPrompt: (value: string) => void;
   setResponse: (raw: string) => Promise<void>;
   setParsedPath: (index: number, path: string) => void;
   toggleInclude: (key: string, included: boolean) => void;
   applySelected: () => Promise<void>;
+  setEditorTab: (tab: EditorTab) => void;
+  openFileForEdit: (path: string) => Promise<void>;
+  closeEditor: () => void;
+  setEditingContent: (content: string) => void;
+  saveEditingFile: () => Promise<void>;
+  revertEditingFile: () => void;
   clearNotice: () => void;
 }
 
@@ -78,6 +97,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   promptFileCount: 0,
   unreadable: [],
   building: false,
+  customPrompt: "",
 
   rawResponse: "",
   parseResult: null,
@@ -85,6 +105,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   applyResults: null,
   applying: false,
+
+  editorTab: "prompt",
+  editingPath: null,
+  editingContent: "",
+  editingOriginal: "",
+  editingLoading: false,
+  saving: false,
 
   notice: null,
   error: null,
@@ -104,6 +131,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         tokenCount: 0,
         promptFileCount: 0,
         unreadable: [],
+        // The previously-open file belongs to the old project; drop it rather
+        // than leaving a stale path pointing into a tree that no longer exists.
+        editingPath: null,
+        editingContent: "",
+        editingOriginal: "",
       });
     } catch (error) {
       set({ scanning: false, error: message(error) });
@@ -192,18 +224,25 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   copyPrompt: async () => {
-    const prompt = get().prompt;
-    if (!prompt) return;
-    await window.LARPGent.copyText(prompt);
+    const { prompt, customPrompt } = get();
+    // The custom instructions are inserted at copy time rather than baked in
+    // at build time, so an edit made after the last build still lands on the
+    // clipboard.
+    const text = insertCustomPrompt(prompt, customPrompt);
+    if (text === "") return;
+    await window.LARPGent.copyText(text);
     set({ notice: "Prompt copied to clipboard." });
   },
 
   savePrompt: async () => {
-    const prompt = get().prompt;
-    if (!prompt) return;
-    const saved = await window.LARPGent.savePrompt(prompt, "prompt.md");
+    const { prompt, customPrompt } = get();
+    const text = insertCustomPrompt(prompt, customPrompt);
+    if (text === "") return;
+    const saved = await window.LARPGent.savePrompt(text, "prompt.md");
     if (saved) set({ notice: `Prompt saved to ${saved}` });
   },
+
+  setCustomPrompt: (value) => set({ customPrompt: value }),
 
   setResponse: async (raw) => {
     set({ rawResponse: raw, applyResults: null, error: null });
@@ -268,6 +307,78 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (error) {
       set({ applying: false, error: message(error) });
     }
+  },
+
+  setEditorTab: (tab) => set({ editorTab: tab }),
+
+  openFileForEdit: async (path) => {
+    const { projectRoot } = get();
+    if (!projectRoot) return;
+    try {
+      set({
+        editorTab: "editor",
+        editingPath: path,
+        editingLoading: true,
+        editingContent: "",
+        editingOriginal: "",
+        error: null,
+      });
+      const content = await window.LARPGent.readFile(projectRoot, path);
+      set({
+        editingContent: content,
+        editingOriginal: content,
+        editingLoading: false,
+      });
+    } catch (error) {
+      set({
+        editingLoading: false,
+        editingPath: null,
+        editingContent: "",
+        editingOriginal: "",
+        error: message(error),
+      });
+    }
+  },
+
+  closeEditor: () => {
+    set({
+      editingPath: null,
+      editingContent: "",
+      editingOriginal: "",
+      editingLoading: false,
+    });
+  },
+
+  setEditingContent: (content) => set({ editingContent: content }),
+
+  saveEditingFile: async () => {
+    const { projectRoot, editingPath, editingContent } = get();
+    if (!projectRoot || !editingPath) return;
+    try {
+      set({ saving: true, error: null });
+      const result = await window.LARPGent.writeFile({
+        projectRoot,
+        path: editingPath,
+        content: editingContent,
+      });
+      // The on-disk copy now equals the buffer; reset the original so the
+      // dirty indicator clears even when the write was a no-op skip.
+      set({
+        editingOriginal: editingContent,
+        saving: false,
+        notice:
+          result.status === "skipped"
+            ? `${editingPath} is already up to date.`
+            : `Saved ${editingPath}${result.backupPath ? ` (backup: ${result.backupPath})` : ""}.`,
+      });
+    } catch (error) {
+      set({ saving: false, error: message(error) });
+    }
+  },
+
+  revertEditingFile: () => {
+    const original = get().editingOriginal;
+    set({ editingContent: original });
   },
 
   clearNotice: () => set({ notice: null }),

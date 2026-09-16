@@ -8,7 +8,7 @@ import { Button, Panel } from "../../lib/ui";
 
 const ROW_HEIGHT = 24;
 
-// Compact overrides so the header's five controls fit inside the 340px panel.
+// Compact overrides so the header's five controls fit inside the panel.
 // The base Button padding is meant for roomier contexts.
 const COMPACT = "px-2 py-0.5 text-xs";
 
@@ -16,6 +16,7 @@ interface RowData {
   rows: TreeRow[];
   onToggle: (id: string, selected: boolean) => void;
   onExpand: (id: string) => void;
+  onOpenFile: (path: string) => void;
 }
 
 function Row({
@@ -23,7 +24,7 @@ function Row({
   style,
   data,
 }: ListChildComponentProps<RowData>): ReactElement {
-  const { rows, onToggle, onExpand } = data;
+  const { rows, onToggle, onExpand, onOpenFile } = data;
   const row = rows[index];
   if (!row) return <div style={style} />;
   const { node, depth } = row;
@@ -33,7 +34,13 @@ function Row({
     <div
       style={{ ...style, paddingLeft: 8 + depth * 14 }}
       className="flex items-center gap-1.5 pr-2 text-sm hover:bg-[#23262d]"
-      title={node.path}
+      title={isDirectory ? node.path : `${node.path} (double-click to open)`}
+      onDoubleClick={() => {
+        // Directory double-clicks fall through to the expand chevron; only
+        // files open in the editor. Guarding here keeps the row's click
+        // behaviour identical for directories.
+        if (!isDirectory) onOpenFile(node.path);
+      }}
     >
       {isDirectory ? (
         <button
@@ -64,7 +71,7 @@ function Row({
   );
 }
 
-export function FileTree(): ReactElement {
+export function FileTree({ width }: { width: number }): ReactElement {
   const tree = useAppStore((state) => state.tree);
   const projectRoot = useAppStore((state) => state.projectRoot);
   const scanning = useAppStore((state) => state.scanning);
@@ -74,19 +81,26 @@ export function FileTree(): ReactElement {
   const toggleNode = useAppStore((state) => state.toggleNode);
   const toggleExpanded = useAppStore((state) => state.toggleExpanded);
   const selectAll = useAppStore((state) => state.selectAll);
+  const openFileForEdit = useAppStore((state) => state.openFileForEdit);
 
   const [containerRef, size] = useElementSize<HTMLDivElement>();
   const rows = useMemo(() => (tree ? flattenTree(tree) : []), [tree]);
 
   const itemData = useMemo<RowData>(
-    () => ({ rows, onToggle: toggleNode, onExpand: toggleExpanded }),
-    [rows, toggleNode, toggleExpanded],
+    () => ({
+      rows,
+      onToggle: toggleNode,
+      onExpand: toggleExpanded,
+      onOpenFile: (path) => void openFileForEdit(path),
+    }),
+    [rows, toggleNode, toggleExpanded, openFileForEdit],
   );
 
   return (
     <Panel
       title="Project"
-      className="w-[340px] shrink-0 border-r"
+      className="shrink-0 border-r"
+      style={{ width }}
       actions={
         <>
           <Button

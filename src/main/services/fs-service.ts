@@ -264,9 +264,23 @@ export async function writeFileWithBackup(
     backupPath = toPosix(path.relative(path.resolve(root), target))
   }
 
+  // Preferred path: write to a sibling temp file and rename into place so a
+  // crash mid-write cannot leave a truncated file.
+  //
+  // The rename is the fragile half on Windows — `MoveFileEx` with
+  // REPLACE_EXISTING is refused with EPERM/EBUSY when the destination is
+  // briefly locked by an indexer, an antivirus scan, or another handle that
+  // has not yet been released. Since the alternative is losing the user's
+  // save entirely, fall back to a direct in-place write whenever either the
+  // temp write or the rename fails.
   const temporary = `${absolute}.tmp`
-  await fs.writeFile(temporary, content, 'utf8')
-  await fs.rename(temporary, absolute)
+  try {
+    await fs.writeFile(temporary, content, 'utf8')
+    await fs.rename(temporary, absolute)
+  } catch {
+    await fs.rm(temporary, { force: true }).catch(() => undefined)
+    await fs.writeFile(absolute, content, 'utf8')
+  }
 
   return backupPath === undefined
     ? { status: 'created' }

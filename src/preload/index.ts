@@ -9,6 +9,8 @@ import type {
   PromptBuildRequest,
   PromptBuildResult,
   ScanResult,
+  WriteFileRequest,
+  WriteFileResult,
 } from "@shared/types";
 
 /**
@@ -23,10 +25,14 @@ const api = {
     ipcRenderer.invoke(IpcChannel.ScanDirectory, root),
   buildPrompt: (request: PromptBuildRequest): Promise<PromptBuildResult> =>
     ipcRenderer.invoke(IpcChannel.BuildPrompt, request),
+  countTokens: (text: string): Promise<number> =>
+    ipcRenderer.invoke(IpcChannel.CountTokens, text),
   parseResponse: (raw: string): Promise<ParseResult> =>
     ipcRenderer.invoke(IpcChannel.ParseResponse, raw),
   readFile: (root: string, relativePath: string): Promise<string> =>
     ipcRenderer.invoke(IpcChannel.ReadFile, root, relativePath),
+  writeFile: (request: WriteFileRequest): Promise<WriteFileResult> =>
+    ipcRenderer.invoke(IpcChannel.WriteFile, request),
   diffFile: (request: DiffRequest): Promise<DiffResult> =>
     ipcRenderer.invoke(IpcChannel.DiffFile, request),
   applyFiles: (request: ApplyRequest): Promise<ApplyResult[]> =>

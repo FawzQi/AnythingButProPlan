@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { BrowserWindow, clipboard, dialog, ipcMain } from 'electron'
+import { countTokens } from 'gpt-tokenizer'
 import { IpcChannel } from '@shared/ipc-channels'
 import type {
   ApplyRequest,
@@ -10,8 +11,15 @@ import type {
   PromptBuildRequest,
   PromptBuildResult,
   ScanResult,
+  WriteFileRequest,
+  WriteFileResult,
 } from '@shared/types'
-import { scanDirectory, readTextFile, writeFileEnsuringDir } from './services/fs-service'
+import {
+  scanDirectory,
+  readTextFile,
+  writeFileEnsuringDir,
+  writeFileWithBackup,
+} from './services/fs-service'
 import { buildPrompt } from './services/prompt-builder'
 import { applyFiles, computeDiff } from './services/apply-engine'
 import { parseResponse } from './services/response-parser'
@@ -87,12 +95,24 @@ export function registerIpcHandlers(): void {
     },
   )
 
+  ipcMain.handle(IpcChannel.CountTokens, async (_event, text: unknown): Promise<number> => {
+    return countTokens(typeof text === 'string' ? text : '')
+  })
+
   ipcMain.handle(
     IpcChannel.ReadFile,
     async (_event, root: unknown, relativePath: unknown): Promise<string> => {
       return readTextFile(requireString(root, 'root'), requireString(relativePath, 'path'))
     },
   )
+
+  ipcMain.handle(IpcChannel.WriteFile, async (_event, request: unknown): Promise<WriteFileResult> => {
+    const typed = request as WriteFileRequest
+    const root = requireString(typed?.projectRoot, 'projectRoot')
+    const relativePath = requireString(typed?.path, 'path')
+    const content = typeof typed?.content === 'string' ? typed.content : ''
+    return writeFileWithBackup(root, relativePath, content)
+  })
 
   ipcMain.handle(IpcChannel.DiffFile, async (_event, request: unknown): Promise<DiffResult> => {
     const typed = request as DiffRequest

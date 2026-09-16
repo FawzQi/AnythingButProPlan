@@ -4,12 +4,18 @@ import { useAppStore } from "./stores/app-store";
 import { FileTree } from "./components/FileTree";
 import { PromptDashboard } from "./components/PromptDashboard";
 import { ResponsePanel } from "./components/ResponsePanel";
-import { Banner } from "./lib/ui";
+import { useResizableWidth } from "./lib/hooks";
+import { Banner, ResizeHandle } from "./lib/ui";
 
 export default function App(): ReactElement {
   const notice = useAppStore((state) => state.notice);
   const error = useAppStore((state) => state.error);
   const clearNotice = useAppStore((state) => state.clearNotice);
+
+  // Left panel: the divider sits to its right, so dragging right grows it.
+  const fileTree = useResizableWidth(370, { min: 180, max: 640, sign: 1 });
+  // Right panel: the divider sits to its left, so dragging right shrinks it.
+  const response = useResizableWidth(560, { min: 320, max: 960, sign: -1 });
 
   useEffect(() => {
     if (!notice) return;
@@ -35,9 +41,17 @@ export default function App(): ReactElement {
       </header>
 
       <main className="flex min-h-0 flex-1">
-        <FileTree />
+        <FileTree width={fileTree.width} />
+        <ResizeHandle
+          onMouseDown={fileTree.onMouseDown}
+          label="Resize project panel"
+        />
         <PromptDashboard />
-        <ResponsePanel />
+        <ResizeHandle
+          onMouseDown={response.onMouseDown}
+          label="Resize response panel"
+        />
+        <ResponsePanel width={response.width} />
       </main>
     </div>
   );

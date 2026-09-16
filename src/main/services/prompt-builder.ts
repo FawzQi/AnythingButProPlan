@@ -97,8 +97,10 @@ export function renderPrompt(tree: string, files: PromptFile[]): string {
 }
 
 /**
- * Read the selected files and assemble the prompt. Unreadable files are
- * reported rather than aborting the whole build.
+ * Read the selected files and assemble the base prompt (files + the output
+ * contract). The user's additional instructions are *not* baked in here — they
+ * are inserted in the renderer at display/copy/save time so an edit to that
+ * box takes effect without a rebuild.
  */
 export async function buildPrompt(
   projectRoot: string,
