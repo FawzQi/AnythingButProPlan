@@ -174,6 +174,32 @@ export interface WriteFileResult {
   status: 'created' | 'overwritten' | 'skipped'
 }
 
+/**
+ * Input for the native confirmation dialog. Replaces `window.confirm` in the
+ * renderer. Electron's synchronous `window.confirm` blocks the renderer
+ * process while the dialog is open and — on some platforms — leaves keyboard
+ * focus in a broken state after the dialog closes: clicking into a textarea
+ * afterwards moves the caret but no key events reach the input, so the user
+ * "can't type". Routing the prompt through the main process keeps the
+ * renderer's focus state intact.
+ */
+export interface ConfirmDialogRequest {
+  /** Primary question, rendered as the dialog's bold headline. */
+  message: string
+  /** Optional secondary paragraph for consequences or extra context. */
+  detail?: string
+  /** Label on the affirmative button. Defaults to "OK". */
+  confirmLabel?: string
+  /** Label on the negative button. Defaults to "Cancel". */
+  cancelLabel?: string
+  /**
+   * Visual severity, which selects the dialog's icon. `danger` maps to
+   * Electron's `warning` icon — the tone exists so callers can express
+   * intent without the mapping leaking into every call site.
+   */
+  tone?: 'info' | 'question' | 'warning' | 'danger'
+}
+
 /* ------------------------------------------------------------------------ *
  * Git source control
  * ------------------------------------------------------------------------ */

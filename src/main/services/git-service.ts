@@ -148,15 +148,30 @@ function parseBranchLine(rest: string, status: GitStatus): void {
  * repository so the UI can present an Initialize button rather than an
  * empty panel.
  *
- * Uses `--porcelain=v1 --branch` because it is stable across Git versions
- * and machine-parseable. Renames are emitted as `old -> new` in this format;
- * the current name is the canonical one and the old name is carried
- * alongside for display.
+ * `-z` is not cosmetic. Without it, `--porcelain=v1` C-quotes any pathname
+ * that contains whitespace, quotes, backslashes, or non-ASCII bytes —
+ * `test copy 2.txt` comes back as the literal string `"test copy 2.txt"`,
+ * quotes included. Every downstream command (`git add`, `git restore`,
+ * `git show`, the FS `unlink` used for untracked-discard) then targets a
+ * path that does not exist and fails:
+ *
+ *   fatal: pathspec '"test copy 3.txt"' did not match any files
+ *   Path is not portable across platforms: "test copy 2.txt"
+ *
+ * `-z` terminates entries with NUL instead of LF and — critically — disables
+ * the C-quoting entirely, so every path arriving here is the real on-disk
+ * path. Renames/copies emit the original path as the *next* NUL-separated
+ * field rather than as `old -> new` in the same field.
  */
 export async function getStatus(root: string): Promise<GitStatus | null> {
   if (!(await isRepository(root))) return null
 
-  const result = await runGit(root, ['status', '--porcelain=v1', '--branch'])
+  const result = await runGit(root, [
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--branch',
+  ])
   if (!result.ok) {
     throw new Error(result.stderr.trim() || 'git status failed.')
   }
@@ -171,26 +186,30 @@ export async function getStatus(root: string): Promise<GitStatus | null> {
     conflicted: [],
   }
 
-  for (const raw of result.stdout.split('\n')) {
-    if (raw === '') continue
+  const fields = result.stdout.split('\0')
+  let index = 0
+  while (index < fields.length) {
+    const entry = fields[index]
+    index += 1
+    if (entry === undefined || entry === '') continue
 
-    if (raw.startsWith('## ')) {
-      parseBranchLine(raw.slice(3), status)
+    if (entry.startsWith('## ')) {
+      parseBranchLine(entry.slice(3), status)
       continue
     }
 
-    if (raw.length < 4) continue
-    const x = raw[0] ?? ' '
-    const y = raw[1] ?? ' '
-    let filePath = raw.slice(3)
-    let oldPath: string | undefined
+    if (entry.length < 4) continue
+    const x = entry[0] ?? ' '
+    const y = entry[1] ?? ' '
+    const filePath = entry.slice(3)
 
-    // Rename/copy notation is `old -> new` in porcelain v1. The current
-    // path is what every downstream operation should target.
-    const arrow = filePath.indexOf(' -> ')
-    if (arrow !== -1) {
-      oldPath = filePath.slice(0, arrow)
-      filePath = filePath.slice(arrow + 4)
+    // In `-z` output the original path of a rename/copy is the next field.
+    // Peek at the status codes rather than scanning for ` -> `, which a
+    // legitimate path could itself contain.
+    let oldPath: string | undefined
+    if (x === 'R' || x === 'C' || y === 'R' || y === 'C') {
+      oldPath = fields[index]
+      index += 1
     }
 
     if (x === '?' && y === '?') {

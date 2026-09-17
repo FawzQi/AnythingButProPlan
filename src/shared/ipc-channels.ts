@@ -5,6 +5,7 @@
  */
 export const IpcChannel = {
   PickDirectory: 'dialog:pick-directory',
+  ConfirmDialog: 'dialog:confirm',
   ScanDirectory: 'fs:scan-directory',
   BuildPrompt: 'prompt:build',
   ParseResponse: 'prompt:parse-response',

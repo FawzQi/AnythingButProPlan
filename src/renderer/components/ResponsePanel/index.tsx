@@ -89,20 +89,23 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
   ).length;
   const writeCount = selectedCount - deleteCount;
 
-  const confirmApply = (): void => {
+  const confirmApply = async (): Promise<void> => {
     const lines: string[] = [];
     if (writeCount > 0) {
       lines.push(`${writeCount} file(s) will be written to disk.`);
     }
     if (deleteCount > 0) {
-      lines.push(
-        `${deleteCount} file(s) will be deleted — the contents are preserved as .bak siblings.`,
-      );
+      lines.push(`${deleteCount} file(s) will be deleted.`);
     }
-    const message =
-      lines.join("\n") +
-      "\n\nExisting files are backed up as .bak first. This cannot be undone from inside LARPGent.";
-    if (window.confirm(message)) void applySelected();
+    const confirmed = await window.LARPGent.confirmDialog({
+      message: `Apply ${selectedCount} file(s)?`,
+      detail:
+        lines.join("\n") +
+        "\n\nGit source control is the safety net for anything that lands on disk.",
+      confirmLabel: "Apply",
+      tone: deleteCount > 0 ? "warning" : "question",
+    });
+    if (confirmed) void applySelected();
   };
 
   return (
@@ -121,7 +124,7 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
           </Button>
           <Button
             variant="primary"
-            onClick={confirmApply}
+            onClick={() => void confirmApply()}
             disabled={applying || selectedCount === 0}
           >
             {applying ? "Applying…" : `Apply ${selectedCount} file(s)`}

@@ -6,6 +6,7 @@ import type {
   ApplyFileInput,
   ApplyRequest,
   ApplyResult,
+  ConfirmDialogRequest,
   DeleteFileRequest,
   DeleteFileResult,
   DiffRequest,
@@ -106,6 +107,50 @@ export function registerIpcHandlers(): void {
         : await dialog.showOpenDialog(options);
       if (result.canceled || result.filePaths.length === 0) return null;
       return result.filePaths[0] ?? null;
+    },
+  );
+
+  /**
+   * Native confirmation dialog. Replaces `window.confirm`, which blocks the
+   * renderer process while open and can leave keyboard focus broken after it
+   * closes — the user clicks into a textarea and nothing they type reaches
+   * the input. Running the dialog from the main process keeps the renderer's
+   * focus state intact because the IPC call is asynchronous.
+   *
+   * Returns `true` for the affirmative button (index 1). Dismissing the
+   * dialog with Escape or the window close button counts as cancel, which is
+   * the safe default for every destructive action this backs.
+   */
+  ipcMain.handle(
+    IpcChannel.ConfirmDialog,
+    async (event, request: unknown): Promise<boolean> => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      const typed = request as ConfirmDialogRequest;
+      const tone = typed?.tone ?? "question";
+      const type =
+        tone === "danger" || tone === "warning"
+          ? ("warning" as const)
+          : tone === "info"
+            ? ("info" as const)
+            : ("question" as const);
+      const options = {
+        type,
+        buttons: [typed?.cancelLabel ?? "Cancel", typed?.confirmLabel ?? "OK"],
+        // Focus the cancel button by default so a stray Enter on a
+        // destructive prompt cancels rather than confirms it.
+        defaultId: 0,
+        cancelId: 0,
+        // Windows renders buttons as command links by default; keeping them
+        // as plain buttons matches the platform's simpler dialogs and keeps
+        // the button row compact.
+        noLink: true,
+        message: requireString(typed?.message, "message"),
+        detail: typeof typed?.detail === "string" ? typed.detail : undefined,
+      };
+      const result = window
+        ? await dialog.showMessageBox(window, options)
+        : await dialog.showMessageBox(options);
+      return result.response === 1;
     },
   );
 

@@ -3,6 +3,7 @@ import { IpcChannel } from "@shared/ipc-channels";
 import type {
   ApplyRequest,
   ApplyResult,
+  ConfirmDialogRequest,
   DeleteFileRequest,
   DeleteFileResult,
   DiffRequest,
@@ -33,6 +34,8 @@ import type {
 const api = {
   pickDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke(IpcChannel.PickDirectory),
+  confirmDialog: (request: ConfirmDialogRequest): Promise<boolean> =>
+    ipcRenderer.invoke(IpcChannel.ConfirmDialog, request),
   scanDirectory: (root: string): Promise<ScanResult> =>
     ipcRenderer.invoke(IpcChannel.ScanDirectory, root),
   buildPrompt: (request: PromptBuildRequest): Promise<PromptBuildResult> =>
