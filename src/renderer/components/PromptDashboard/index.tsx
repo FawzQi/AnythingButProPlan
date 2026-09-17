@@ -5,6 +5,7 @@ import { useAppStore } from '../../stores/app-store'
 import { countFiles } from '../../lib/tree'
 import { insertCustomPrompt } from '../../lib/prompt'
 import { Banner, Button, Panel } from '../../lib/ui'
+import { SourceControl } from '../SourceControl'
 
 const TOKEN_WARNING_THRESHOLD = 100_000
 
@@ -218,11 +219,24 @@ export function PromptDashboard(): ReactElement {
   const revertEditingFile = useAppStore((state) => state.revertEditingFile)
   const closeEditor = useAppStore((state) => state.closeEditor)
 
+  const gitStatus = useAppStore((state) => state.gitStatus)
+
   const counts = useMemo(
     () => (tree ? countFiles(tree) : { selected: 0, total: 0 }),
     [tree],
   )
   const editingDirty = editingContent !== editingOriginal
+
+  // A count badge for the Source Control tab: staged + unstaged + untracked.
+  // `undefined` means not yet loaded; `null` means not a repo — both render
+  // as no badge, which is the right signal for either state.
+  const gitChangeCount =
+    gitStatus && typeof gitStatus === "object"
+      ? gitStatus.staged.length +
+        gitStatus.unstaged.length +
+        gitStatus.untracked.length +
+        gitStatus.conflicted.length
+      : 0
 
   const headerActions: ReactNode =
     editorTab === 'prompt' ? (
@@ -240,7 +254,7 @@ export function PromptDashboard(): ReactElement {
           Save
         </Button>
       </>
-    ) : (
+    ) : editorTab === 'editor' ? (
       <>
         {editingPath ? (
           <span
@@ -275,6 +289,11 @@ export function PromptDashboard(): ReactElement {
           Close
         </Button>
       </>
+    ) : (
+      // Source Control tab has its own action bar inside the panel — the
+      // header shows nothing here, keeping the panel's own controls as the
+      // single source of truth for Git operations.
+      null
     )
 
   return (
@@ -298,9 +317,26 @@ export function PromptDashboard(): ReactElement {
             Editor
             {editingDirty ? <span className="ml-1 text-amber-400">•</span> : null}
           </TabButton>
+          <TabButton
+            active={editorTab === 'source'}
+            onClick={() => setEditorTab('source')}
+          >
+            Source Control
+            {gitChangeCount > 0 ? (
+              <span className="ml-1 rounded bg-[#2a2f38] px-1.5 text-[10px] text-slate-300">
+                {gitChangeCount}
+              </span>
+            ) : null}
+          </TabButton>
         </div>
 
-        {editorTab === 'prompt' ? <PromptTab /> : <EditorTab />}
+        {editorTab === 'prompt' ? (
+          <PromptTab />
+        ) : editorTab === 'editor' ? (
+          <EditorTab />
+        ) : (
+          <SourceControl />
+        )}
       </div>
     </Panel>
   )

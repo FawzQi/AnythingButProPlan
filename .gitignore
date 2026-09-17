@@ -41,3 +41,5 @@ Thumbs.db
 *.swo
 
 CLAUDE.md
+*.bak
+stash.txt

@@ -11,6 +11,16 @@ import type {
   DeleteFileResult,
   DiffRequest,
   DiffResult,
+  GitCommitRequest,
+  GitCommitResult,
+  GitDiffContent,
+  GitDiffRequest,
+  GitDiscardRequest,
+  GitInitRequest,
+  GitInitResult,
+  GitStageRequest,
+  GitStatus,
+  GitUnstageRequest,
   ParseResult,
   PromptBuildRequest,
   PromptBuildResult,
@@ -26,6 +36,15 @@ import {
   deleteFileWithBackup,
   cleanBackupFiles,
 } from "./services/fs-service";
+import {
+  commitChanges,
+  discardFile,
+  getDiffContent,
+  getStatus,
+  initRepository,
+  stageFile,
+  unstageFile,
+} from "./services/git-service";
 import { buildPrompt } from "./services/prompt-builder";
 import { applyFiles, computeDiff } from "./services/apply-engine";
 import { parseResponse } from "./services/response-parser";
@@ -265,6 +284,88 @@ export function registerIpcHandlers(): void {
     IpcChannel.OpenTerminal,
     async (_event, root: unknown): Promise<void> => {
       openTerminalAt(requireString(root, "root"));
+    },
+  );
+
+  /* ---------------------------------------------------------------------- *
+   * Git source control
+   * ---------------------------------------------------------------------- */
+
+  ipcMain.handle(
+    IpcChannel.GitStatus,
+    async (_event, root: unknown): Promise<GitStatus | null> => {
+      return getStatus(requireString(root, "root"));
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.GitInit,
+    async (_event, request: unknown): Promise<GitInitResult> => {
+      const typed = request as GitInitRequest;
+      const root = requireString(typed?.projectRoot, "projectRoot");
+      return initRepository(root);
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.GitStage,
+    async (_event, request: unknown): Promise<void> => {
+      const typed = request as GitStageRequest;
+      await stageFile(
+        requireString(typed?.projectRoot, "projectRoot"),
+        requireString(typed?.path, "path"),
+      );
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.GitUnstage,
+    async (_event, request: unknown): Promise<void> => {
+      const typed = request as GitUnstageRequest;
+      await unstageFile(
+        requireString(typed?.projectRoot, "projectRoot"),
+        requireString(typed?.path, "path"),
+      );
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.GitDiscard,
+    async (_event, request: unknown): Promise<void> => {
+      const typed = request as GitDiscardRequest;
+      const root = requireString(typed?.projectRoot, "projectRoot");
+      const relativePath = requireString(typed?.path, "path");
+      if (typed?.untracked === true) {
+        // An untracked file has no index entry to restore from. Removing it
+        // via the `.bak`-producing delete keeps the existing safety net —
+        // a discard is still undoable from the `.bak` sibling.
+        await deleteFileWithBackup(root, relativePath);
+      } else {
+        await discardFile(root, relativePath);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.GitCommit,
+    async (_event, request: unknown): Promise<GitCommitResult> => {
+      const typed = request as GitCommitRequest;
+      return commitChanges(
+        requireString(typed?.projectRoot, "projectRoot"),
+        requireString(typed?.message, "message"),
+      );
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.GitDiff,
+    async (_event, request: unknown): Promise<GitDiffContent> => {
+      const typed = request as GitDiffRequest;
+      return getDiffContent(
+        requireString(typed?.projectRoot, "projectRoot"),
+        requireString(typed?.path, "path"),
+        typed?.staged === true,
+      );
     },
   );
 }

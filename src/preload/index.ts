@@ -8,6 +8,16 @@ import type {
   DeleteFileResult,
   DiffRequest,
   DiffResult,
+  GitCommitRequest,
+  GitCommitResult,
+  GitDiffContent,
+  GitDiffRequest,
+  GitDiscardRequest,
+  GitInitRequest,
+  GitInitResult,
+  GitStageRequest,
+  GitStatus,
+  GitUnstageRequest,
   ParseResult,
   PromptBuildRequest,
   PromptBuildResult,
@@ -40,6 +50,20 @@ const api = {
     ipcRenderer.invoke(IpcChannel.DeleteFile, request),
   diffFile: (request: DiffRequest): Promise<DiffResult> =>
     ipcRenderer.invoke(IpcChannel.DiffFile, request),
+  gitStatus: (root: string): Promise<GitStatus | null> =>
+    ipcRenderer.invoke(IpcChannel.GitStatus, root),
+  gitInit: (request: GitInitRequest): Promise<GitInitResult> =>
+    ipcRenderer.invoke(IpcChannel.GitInit, request),
+  gitStage: (request: GitStageRequest): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.GitStage, request),
+  gitUnstage: (request: GitUnstageRequest): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.GitUnstage, request),
+  gitDiscard: (request: GitDiscardRequest): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.GitDiscard, request),
+  gitCommit: (request: GitCommitRequest): Promise<GitCommitResult> =>
+    ipcRenderer.invoke(IpcChannel.GitCommit, request),
+  gitDiff: (request: GitDiffRequest): Promise<GitDiffContent> =>
+    ipcRenderer.invoke(IpcChannel.GitDiff, request),
   applyFiles: (request: ApplyRequest): Promise<ApplyResult[]> =>
     ipcRenderer.invoke(IpcChannel.ApplyFiles, request),
   savePrompt: (

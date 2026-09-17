@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type {
   ApplyResult,
   FileNode,
+  GitStatus,
   ParsedFile,
   ParseResult,
 } from "@shared/types";
@@ -17,7 +18,7 @@ export function parsedFileKey(file: ParsedFile, index: number): string {
   return file.path ?? `#${index}`;
 }
 
-export type EditorTab = "prompt" | "editor";
+export type EditorTab = "prompt" | "editor" | "source";
 
 interface AppState {
   projectRoot: string | null;
@@ -61,6 +62,21 @@ interface AppState {
    */
   deletingPath: string | null;
 
+  /**
+   * Result of the most recent `git status`. `null` when the project root is
+   * not a repository — the Source Control tab shows an Initialize button in
+   * that case. `undefined` means "not yet loaded", which is distinguished
+   * from `null` so the initial paint can show a loading state rather than
+   * flashing the init prompt.
+   */
+  gitStatus: GitStatus | null | undefined;
+  /** True while a status refresh is in flight. */
+  gitStatusLoading: boolean;
+  /** True while any Git mutation (stage, commit, discard, init) is in flight. */
+  gitBusy: boolean;
+  /** Draft commit message bound to the textarea in the Source Control tab. */
+  gitCommitMessage: string;
+
   notice: string | null;
   error: string | null;
 
@@ -86,6 +102,13 @@ interface AppState {
   revertEditingFile: () => void;
   cleanBackups: () => Promise<void>;
   deleteFileFromTree: (path: string) => Promise<void>;
+  refreshGitStatus: () => Promise<void>;
+  initGitRepo: () => Promise<void>;
+  stageGitPath: (path: string) => Promise<void>;
+  unstageGitPath: (path: string) => Promise<void>;
+  discardGitPath: (path: string, untracked: boolean) => Promise<void>;
+  commitGitChanges: () => Promise<void>;
+  setGitCommitMessage: (message: string) => void;
   clearNotice: () => void;
 }
 
@@ -133,6 +156,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   cleaning: false,
   deletingPath: null,
 
+  gitStatus: undefined,
+  gitStatusLoading: false,
+  gitBusy: false,
+  gitCommitMessage: "",
+
   notice: null,
   error: null,
 
@@ -157,7 +185,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         editingPath: null,
         editingContent: "",
         editingOriginal: "",
+        // Reset git state — the previous project's status is meaningless
+        // here, and `undefined` puts the Source Control tab back into its
+        // loading state rather than showing the old repo's branch.
+        gitStatus: undefined,
+        gitCommitMessage: "",
       });
+      await get().refreshGitStatus();
     } catch (error) {
       set({ scanning: false, error: message(error) });
     }
@@ -181,6 +215,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         fileCount: scan.fileCount,
         scanning: false,
       });
+      // A scan can pick up files changed outside the app, so refresh Git
+      // status alongside it.
+      await get().refreshGitStatus();
     } catch (error) {
       set({ scanning: false, error: message(error) });
     }
@@ -345,6 +382,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ applying: true, error: null });
       const results = await window.LARPGent.applyFiles({ projectRoot, files });
       set({ applyResults: results, applying: false });
+      // Applied changes touch the working tree; refresh Git status so the
+      // Source Control tab reflects what the user just wrote.
+      await get().refreshGitStatus();
     } catch (error) {
       set({ applying: false, error: message(error) });
     }
@@ -412,6 +452,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             ? `${editingPath} is already up to date.`
             : `Saved ${editingPath}${result.backupPath ? ` (backup: ${result.backupPath})` : ""}.`,
       });
+      await get().refreshGitStatus();
     } catch (error) {
       set({ saving: false, error: message(error) });
     }
@@ -496,10 +537,135 @@ export const useAppStore = create<AppState>((set, get) => ({
         });
       }
       await get().refreshProject();
+      await get().refreshGitStatus();
     } catch (error) {
       set({ deletingPath: null, error: message(error) });
     }
   },
+
+  refreshGitStatus: async () => {
+    const { projectRoot } = get();
+    if (!projectRoot) {
+      set({ gitStatus: null, gitStatusLoading: false });
+      return;
+    }
+    set({ gitStatusLoading: true, error: null });
+    try {
+      const status = await window.LARPGent.gitStatus(projectRoot);
+      // A project switch while the call was in flight invalidates the
+      // result; drop it rather than applying to the wrong root.
+      if (get().projectRoot !== projectRoot) return;
+      set({ gitStatus: status, gitStatusLoading: false });
+    } catch (error) {
+      if (get().projectRoot !== projectRoot) return;
+      // A Git failure (missing binary, corrupt repo) still leaves the tab
+      // usable — `null` tells it to show the init prompt, and the banner
+      // reports the reason.
+      set({ gitStatus: null, gitStatusLoading: false, error: message(error) });
+    }
+  },
+
+  initGitRepo: async () => {
+    const { projectRoot } = get();
+    if (!projectRoot) return;
+    const confirmed = window.confirm(
+      `Initialize a Git repository in ${projectRoot}?\n\n` +
+        "This creates a .git directory. No files are committed yet.",
+    );
+    if (!confirmed) return;
+    try {
+      set({ gitBusy: true, error: null });
+      const result = await window.LARPGent.gitInit({ projectRoot });
+      set({
+        gitBusy: false,
+        notice: result.created
+          ? "Git repository initialized."
+          : "This folder is already a Git repository.",
+      });
+      await get().refreshGitStatus();
+    } catch (error) {
+      set({ gitBusy: false, error: message(error) });
+    }
+  },
+
+  stageGitPath: async (path) => {
+    const { projectRoot } = get();
+    if (!projectRoot) return;
+    try {
+      set({ gitBusy: true, error: null });
+      await window.LARPGent.gitStage({ projectRoot, path });
+      set({ gitBusy: false });
+      await get().refreshGitStatus();
+    } catch (error) {
+      set({ gitBusy: false, error: message(error) });
+    }
+  },
+
+  unstageGitPath: async (path) => {
+    const { projectRoot } = get();
+    if (!projectRoot) return;
+    try {
+      set({ gitBusy: true, error: null });
+      await window.LARPGent.gitUnstage({ projectRoot, path });
+      set({ gitBusy: false });
+      await get().refreshGitStatus();
+    } catch (error) {
+      set({ gitBusy: false, error: message(error) });
+    }
+  },
+
+  discardGitPath: async (path, untracked) => {
+    const { projectRoot } = get();
+    if (!projectRoot) return;
+    const confirmed = window.confirm(
+      untracked
+        ? `Delete untracked file ${path}?\n\n` +
+            "Its contents are preserved as a .bak sibling so the discard can be undone."
+        : `Discard changes to ${path}?\n\n` +
+            "The working tree version is replaced with the staged version. This cannot be undone from inside LARPGent.",
+    );
+    if (!confirmed) return;
+    try {
+      set({ gitBusy: true, error: null });
+      await window.LARPGent.gitDiscard({ projectRoot, path, untracked });
+      set({ gitBusy: false, notice: `Discarded changes to ${path}.` });
+      await get().refreshGitStatus();
+    } catch (error) {
+      set({ gitBusy: false, error: message(error) });
+    }
+  },
+
+  commitGitChanges: async () => {
+    const { projectRoot, gitCommitMessage, gitStatus } = get();
+    if (!projectRoot) return;
+    if (!gitStatus || gitStatus.staged.length === 0) {
+      set({ error: "Nothing staged to commit." });
+      return;
+    }
+    if (gitCommitMessage.trim() === "") {
+      set({ error: "Enter a commit message first." });
+      return;
+    }
+    try {
+      set({ gitBusy: true, error: null });
+      const result = await window.LARPGent.gitCommit({
+        projectRoot,
+        message: gitCommitMessage,
+      });
+      set({
+        gitBusy: false,
+        gitCommitMessage: "",
+        notice: result.commitHash
+          ? `Committed ${result.commitHash.slice(0, 7)}.`
+          : "Committed.",
+      });
+      await get().refreshGitStatus();
+    } catch (error) {
+      set({ gitBusy: false, error: message(error) });
+    }
+  },
+
+  setGitCommitMessage: (message) => set({ gitCommitMessage: message }),
 
   clearNotice: () => set({ notice: null }),
 }));
