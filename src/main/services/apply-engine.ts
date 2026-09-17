@@ -5,11 +5,11 @@ import type {
   PatchBlock,
 } from "@shared/types";
 import {
-  deleteFileWithBackup,
+  deleteFile,
   fileExists,
   readTextFile,
   resolveWithinRoot,
-  writeFileWithBackup,
+  writeFile,
 } from "./fs-service";
 
 /**
@@ -39,9 +39,13 @@ export async function computeDiff(
  *   - Patches: `patches` are applied in order to the file on disk, then the
  *     result is written. Any patch that cannot be located fails the whole
  *     file — the applier never writes a partial or guessed result.
- *   - Delete: `delete` is true. The file is renamed to a `.bak` sibling; a
- *     missing file is a no-op reported as `deleted` (the desired end state
- *     already holds), not an error.
+ *   - Delete: `delete` is true. The file is removed; a missing file is a
+ *     no-op reported as `deleted` (the desired end state already holds),
+ *     not an error.
+ *
+ * Version history is provided by Git source control, not by `.bak` siblings
+ * — a write or delete that lands here is picked up by the next status
+ * refresh and is undone from the Source Control panel.
  */
 export async function applyFiles(
   request: ApplyRequest,
@@ -59,43 +63,22 @@ export async function applyFiles(
     }
     try {
       if (file.delete === true) {
-        const outcome = await deleteFileWithBackup(
-          request.projectRoot,
-          file.path,
-        );
-        results.push({
-          path: file.path,
-          status: "deleted",
-          ...(outcome.backupPath === undefined
-            ? {}
-            : { backupPath: outcome.backupPath }),
-        });
+        await deleteFile(request.projectRoot, file.path);
+        results.push({ path: file.path, status: "deleted" });
       } else if (file.patches && file.patches.length > 0) {
-        const outcome = await writePatchedFile(
+        await writePatchedFile(
           request.projectRoot,
           file.path,
           file.patches,
         );
-        results.push({
-          path: file.path,
-          status: "patched",
-          ...(outcome.backupPath === undefined
-            ? {}
-            : { backupPath: outcome.backupPath }),
-        });
+        results.push({ path: file.path, status: "patched" });
       } else {
-        const outcome = await writeFileWithBackup(
+        const outcome = await writeFile(
           request.projectRoot,
           file.path,
           file.content,
         );
-        results.push({
-          path: file.path,
-          status: outcome.status,
-          ...(outcome.backupPath === undefined
-            ? {}
-            : { backupPath: outcome.backupPath }),
-        });
+        results.push({ path: file.path, status: outcome.status });
       }
     } catch (error) {
       results.push({
@@ -119,7 +102,7 @@ async function writePatchedFile(
   root: string,
   relativePath: string,
   patches: PatchBlock[],
-): Promise<{ backupPath?: string }> {
+): Promise<void> {
   if (!(await fileExists(root, relativePath))) {
     throw new Error(
       `${relativePath} does not exist on disk, so a patch cannot be applied. Ask the AI to emit the full file instead.`,
@@ -132,14 +115,7 @@ async function writePatchedFile(
       `${applied.reason} Ask the AI to resend this file as a full rewrite.`,
     );
   }
-  const outcome = await writeFileWithBackup(
-    root,
-    relativePath,
-    applied.content,
-  );
-  return outcome.backupPath === undefined
-    ? {}
-    : { backupPath: outcome.backupPath };
+  await writeFile(root, relativePath, applied.content);
 }
 
 export type PatchOutcome =

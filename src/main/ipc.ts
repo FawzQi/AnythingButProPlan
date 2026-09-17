@@ -6,7 +6,6 @@ import type {
   ApplyFileInput,
   ApplyRequest,
   ApplyResult,
-  CleanBackupsResult,
   DeleteFileRequest,
   DeleteFileResult,
   DiffRequest,
@@ -32,16 +31,17 @@ import {
   scanDirectory,
   readTextFile,
   writeFileEnsuringDir,
-  writeFileWithBackup,
-  deleteFileWithBackup,
-  cleanBackupFiles,
+  writeFile,
+  deleteFile,
 } from "./services/fs-service";
 import {
   commitChanges,
+  discardAllFiles,
   discardFile,
   getDiffContent,
   getStatus,
   initRepository,
+  stageAllFiles,
   stageFile,
   unstageFile,
 } from "./services/git-service";
@@ -165,7 +165,7 @@ export function registerIpcHandlers(): void {
       const root = requireString(typed?.projectRoot, "projectRoot");
       const relativePath = requireString(typed?.path, "path");
       const content = typeof typed?.content === "string" ? typed.content : "";
-      return writeFileWithBackup(root, relativePath, content);
+      return writeFile(root, relativePath, content);
     },
   );
 
@@ -175,7 +175,7 @@ export function registerIpcHandlers(): void {
       const typed = request as DeleteFileRequest;
       const root = requireString(typed?.projectRoot, "projectRoot");
       const relativePath = requireString(typed?.path, "path");
-      return deleteFileWithBackup(root, relativePath);
+      return deleteFile(root, relativePath);
     },
   );
 
@@ -260,13 +260,6 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
-    IpcChannel.CleanBackups,
-    async (_event, root: unknown): Promise<CleanBackupsResult> => {
-      return cleanBackupFiles(requireString(root, "root"));
-    },
-  );
-
-  ipcMain.handle(
     IpcChannel.CopyText,
     async (_event, text: unknown): Promise<void> => {
       clipboard.writeText(requireString(text, "text"));
@@ -319,6 +312,13 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
+    IpcChannel.GitStageAll,
+    async (_event, root: unknown): Promise<void> => {
+      await stageAllFiles(requireString(root, "root"));
+    },
+  );
+
+  ipcMain.handle(
     IpcChannel.GitUnstage,
     async (_event, request: unknown): Promise<void> => {
       const typed = request as GitUnstageRequest;
@@ -336,13 +336,20 @@ export function registerIpcHandlers(): void {
       const root = requireString(typed?.projectRoot, "projectRoot");
       const relativePath = requireString(typed?.path, "path");
       if (typed?.untracked === true) {
-        // An untracked file has no index entry to restore from. Removing it
-        // via the `.bak`-producing delete keeps the existing safety net —
-        // a discard is still undoable from the `.bak` sibling.
-        await deleteFileWithBackup(root, relativePath);
+        // An untracked file has no index entry to restore from, so discard
+        // means removal from disk. There is no version to preserve — the
+        // file was never committed.
+        await deleteFile(root, relativePath);
       } else {
         await discardFile(root, relativePath);
       }
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.GitDiscardAll,
+    async (_event, root: unknown): Promise<void> => {
+      await discardAllFiles(requireString(root, "root"));
     },
   );
 

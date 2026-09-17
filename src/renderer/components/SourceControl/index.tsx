@@ -123,8 +123,10 @@ export function SourceControl(): ReactElement {
   const refresh = useAppStore((state) => state.refreshGitStatus);
   const init = useAppStore((state) => state.initGitRepo);
   const stage = useAppStore((state) => state.stageGitPath);
+  const stageAll = useAppStore((state) => state.stageAllGitPaths);
   const unstage = useAppStore((state) => state.unstageGitPath);
   const discard = useAppStore((state) => state.discardGitPath);
+  const discardAll = useAppStore((state) => state.discardAllGitPaths);
   const commit = useAppStore((state) => state.commitGitChanges);
 
   const [diffTarget, setDiffTarget] = useState<DiffTarget | null>(null);
@@ -168,6 +170,13 @@ export function SourceControl(): ReactElement {
 
   const hasStaged = status.staged.length > 0;
   const canCommit = hasStaged && commitMessage.trim() !== "" && !busy;
+  const hasAnyChange =
+    status.staged.length +
+      status.unstaged.length +
+      status.untracked.length +
+      status.conflicted.length >
+    0;
+  const hasDiscardable = status.unstaged.length > 0;
 
   return (
     // `min-h-0 flex-1` rather than `h-full`: the parent is a `flex-col`
@@ -197,15 +206,39 @@ export function SourceControl(): ReactElement {
             ↓{status.behind}
           </span>
         ) : null}
-        <Button
-          variant="ghost"
-          className="ml-auto px-2 py-0.5 text-xs"
-          disabled={statusLoading || busy}
-          onClick={() => void refresh()}
-          title="Refresh Git status"
-        >
-          {statusLoading ? "…" : "↻"}
-        </Button>
+        <div className="ml-auto flex items-center gap-1">
+          <Button
+            variant="ghost"
+            className="px-2 py-0.5 text-xs"
+            disabled={busy || statusLoading || !hasAnyChange}
+            onClick={() => void stageAll()}
+            title="Stage every change (modified, added, deleted, untracked)"
+          >
+            Stage all
+          </Button>
+          <Button
+            variant="ghost"
+            className="px-2 py-0.5 text-xs"
+            disabled={busy || statusLoading || !hasDiscardable}
+            onClick={() => void discardAll()}
+            title={
+              hasDiscardable
+                ? "Discard every unstaged change to tracked files"
+                : "No unstaged changes to discard"
+            }
+          >
+            Discard all
+          </Button>
+          <Button
+            variant="ghost"
+            className="px-2 py-0.5 text-xs"
+            disabled={statusLoading || busy}
+            onClick={() => void refresh()}
+            title="Refresh Git status"
+          >
+            {statusLoading ? "…" : "↻"}
+          </Button>
+        </div>
       </div>
 
       <div className="shrink-0 border-b border-[#2c3038] p-2">

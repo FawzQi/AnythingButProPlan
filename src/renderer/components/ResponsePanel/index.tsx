@@ -287,9 +287,6 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
                     {applyResults.map((result) => (
                       <li key={result.path} className="truncate">
                         {result.status}: {result.path}
-                        {result.backupPath
-                          ? ` (backup: ${result.backupPath})`
-                          : ""}
                         {result.error ? ` — ${result.error}` : ""}
                       </li>
                     ))}

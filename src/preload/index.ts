@@ -3,7 +3,6 @@ import { IpcChannel } from "@shared/ipc-channels";
 import type {
   ApplyRequest,
   ApplyResult,
-  CleanBackupsResult,
   DeleteFileRequest,
   DeleteFileResult,
   DiffRequest,
@@ -56,10 +55,14 @@ const api = {
     ipcRenderer.invoke(IpcChannel.GitInit, request),
   gitStage: (request: GitStageRequest): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.GitStage, request),
+  gitStageAll: (root: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.GitStageAll, root),
   gitUnstage: (request: GitUnstageRequest): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.GitUnstage, request),
   gitDiscard: (request: GitDiscardRequest): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.GitDiscard, request),
+  gitDiscardAll: (root: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.GitDiscardAll, root),
   gitCommit: (request: GitCommitRequest): Promise<GitCommitResult> =>
     ipcRenderer.invoke(IpcChannel.GitCommit, request),
   gitDiff: (request: GitDiffRequest): Promise<GitDiffContent> =>
@@ -71,8 +74,6 @@ const api = {
     suggestedName: string,
   ): Promise<string | null> =>
     ipcRenderer.invoke(IpcChannel.SavePrompt, content, suggestedName),
-  cleanBackups: (root: string): Promise<CleanBackupsResult> =>
-    ipcRenderer.invoke(IpcChannel.CleanBackups, root),
   copyText: (text: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.CopyText, text),
   openTerminal: (root: string): Promise<void> =>

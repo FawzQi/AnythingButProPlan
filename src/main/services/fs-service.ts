@@ -1,46 +1,96 @@
-import { promises as fs } from 'node:fs'
-import path from 'node:path'
-import ignore, { type Ignore } from 'ignore'
-import sanitizeFilename from 'sanitize-filename'
-import type { CleanBackupsResult, FileNode, ScanResult } from '@shared/types'
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import ignore, { type Ignore } from "ignore";
+import sanitizeFilename from "sanitize-filename";
+import type { FileNode, ScanResult } from "@shared/types";
 
 /** Directories that are never worth prompting over. */
 const ALWAYS_SKIP = new Set([
-  'node_modules',
-  '.git',
-  'dist',
-  'build',
-  '__pycache__',
-  'venv',
-  '.venv',
-  'target',
-  'bin',
-  'obj',
-  '.next',
-  '.cache',
-])
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  "__pycache__",
+  "venv",
+  ".venv",
+  "target",
+  "bin",
+  "obj",
+  ".next",
+  ".cache",
+]);
 
 const BINARY_EXTENSIONS = new Set([
-  '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.avif', '.tiff',
-  '.svgz', '.mp3', '.mp4', '.mov', '.avi', '.mkv', '.wav', '.flac', '.ogg',
-  '.zip', '.tar', '.gz', '.bz2', '.xz', '.7z', '.rar', '.jar', '.war',
-  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt',
-  '.exe', '.dll', '.so', '.dylib', '.o', '.a', '.lib', '.class', '.pyc', '.pyo',
-  '.wasm', '.bin', '.dat', '.db', '.sqlite', '.sqlite3', '.woff', '.woff2',
-  '.ttf', '.otf', '.eot', '.psd', '.ai', '.sketch', '.blend', '.lockb',
-])
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".bmp",
+  ".ico",
+  ".webp",
+  ".avif",
+  ".tiff",
+  ".svgz",
+  ".mp3",
+  ".mp4",
+  ".mov",
+  ".avi",
+  ".mkv",
+  ".wav",
+  ".flac",
+  ".ogg",
+  ".zip",
+  ".tar",
+  ".gz",
+  ".bz2",
+  ".xz",
+  ".7z",
+  ".rar",
+  ".jar",
+  ".war",
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".ppt",
+  ".pptx",
+  ".odt",
+  ".exe",
+  ".dll",
+  ".so",
+  ".dylib",
+  ".o",
+  ".a",
+  ".lib",
+  ".class",
+  ".pyc",
+  ".pyo",
+  ".wasm",
+  ".bin",
+  ".dat",
+  ".db",
+  ".sqlite",
+  ".sqlite3",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".otf",
+  ".eot",
+  ".psd",
+  ".ai",
+  ".sketch",
+  ".blend",
+  ".lockb",
+]);
 
 /**
- * Backup files written by `writeFileWithBackup`: `<name>.bak`, or
- * `<name>.bak.<timestamp>` when a plain `.bak` already existed. Both are our
- * own artifacts — the tree hides them and the "clean backups" action removes
- * them, so the pattern lives in one place.
+ * Legacy `.bak` files written by earlier versions of the app, before Git
+ * source control replaced the backup system. They are still hidden from the
+ * tree — showing them would clutter the list and cause "Select all" to pull
+ * them into a prompt — but the app no longer writes, reads, or cleans them.
  */
-const BACKUP_FILE = /\.bak(?:\.[0-9T]+)?$/i
-
-export function isBackupFileName(name: string): boolean {
-  return BACKUP_FILE.test(name)
-}
+const LEGACY_BACKUP_FILE = /\.bak(?:\.[0-9T]+)?$/i;
 
 /**
  * Files whose names routinely carry secrets: API keys, private keys, cloud
@@ -56,17 +106,19 @@ export function isBackupFileName(name: string): boolean {
  * shape of a secret, not the secret itself, and they are exactly the kind
  * of file users legitimately want to send to the AI.
  */
-const SENSITIVE_FILE_NAME = /^(?:\.env(?:\.[a-zA-Z0-9_-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|\.?_?netrc|\.(?:npmrc|pypirc|pgpass|htpasswd|git-credentials)|credentials\.json|service-account[\w.-]*\.json)$/i
-const SENSITIVE_FILE_EXTENSION = /\.(?:pem|key|p12|pfx|keystore|jks|kdbx)$/i
-const SAFE_TEMPLATE_NAME = /\.(?:example|sample|template|dist|defaults)(?:\.[a-z0-9]+)*$/i
+const SENSITIVE_FILE_NAME =
+  /^(?:\.env(?:\.[a-zA-Z0-9_-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|\.?_?netrc|\.(?:npmrc|pypirc|pgpass|htpasswd|git-credentials)|credentials\.json|service-account[\w.-]*\.json)$/i;
+const SENSITIVE_FILE_EXTENSION = /\.(?:pem|key|p12|pfx|keystore|jks|kdbx)$/i;
+const SAFE_TEMPLATE_NAME =
+  /\.(?:example|sample|template|dist|defaults)(?:\.[a-z0-9]+)*$/i;
 
 export function isSensitiveFileName(name: string): boolean {
-  if (SAFE_TEMPLATE_NAME.test(name)) return false
-  return SENSITIVE_FILE_NAME.test(name) || SENSITIVE_FILE_EXTENSION.test(name)
+  if (SAFE_TEMPLATE_NAME.test(name)) return false;
+  return SENSITIVE_FILE_NAME.test(name) || SENSITIVE_FILE_EXTENSION.test(name);
 }
 
 export function toPosix(value: string): string {
-  return value.split(path.sep).join('/')
+  return value.split(path.sep).join("/");
 }
 
 /**
@@ -75,131 +127,140 @@ export function toPosix(value: string): string {
  * funnels through here — this is the single traversal guard.
  */
 export function resolveWithinRoot(root: string, relativePath: string): string {
-  if (relativePath.includes('\0')) {
-    throw new Error(`Illegal path: ${relativePath}`)
+  if (relativePath.includes("\0")) {
+    throw new Error(`Illegal path: ${relativePath}`);
   }
 
-  const normalizedRoot = path.resolve(root)
-  const absolute = path.resolve(normalizedRoot, relativePath)
+  const normalizedRoot = path.resolve(root);
+  const absolute = path.resolve(normalizedRoot, relativePath);
   const withSeparator = normalizedRoot.endsWith(path.sep)
     ? normalizedRoot
-    : normalizedRoot + path.sep
+    : normalizedRoot + path.sep;
   if (absolute !== normalizedRoot && !absolute.startsWith(withSeparator)) {
-    throw new Error(`Path escapes the project root: ${relativePath}`)
+    throw new Error(`Path escapes the project root: ${relativePath}`);
   }
 
   // Reject rather than rewrite: a silently renamed AI path would write the
   // file somewhere the model did not ask for. This catches the names Linux
   // accepts but Windows cannot create (CON, NUL, trailing dots, `:`).
-  for (const segment of relativePath.split('/')) {
-    if (segment === '') continue
+  for (const segment of relativePath.split("/")) {
+    if (segment === "") continue;
     if (sanitizeFilename(segment) !== segment) {
-      throw new Error(`Path is not portable across platforms: ${relativePath}`)
+      throw new Error(`Path is not portable across platforms: ${relativePath}`);
     }
   }
 
-  return absolute
+  return absolute;
 }
 
 async function loadGitignore(root: string): Promise<Ignore> {
-  const matcher = ignore()
+  const matcher = ignore();
   try {
-    const contents = await fs.readFile(path.join(root, '.gitignore'), 'utf8')
-    matcher.add(contents)
+    const contents = await fs.readFile(path.join(root, ".gitignore"), "utf8");
+    matcher.add(contents);
   } catch {
     // No .gitignore is normal, not an error.
   }
-  return matcher
+  return matcher;
 }
 
 export async function isBinaryFile(absolutePath: string): Promise<boolean> {
-  if (BINARY_EXTENSIONS.has(path.extname(absolutePath).toLowerCase())) return true
-  let handle: fs.FileHandle | undefined
+  if (BINARY_EXTENSIONS.has(path.extname(absolutePath).toLowerCase()))
+    return true;
+  let handle: fs.FileHandle | undefined;
   try {
-    handle = await fs.open(absolutePath, 'r')
-    const buffer = Buffer.alloc(1024)
-    const { bytesRead } = await handle.read(buffer, 0, 1024, 0)
-    return buffer.subarray(0, bytesRead).includes(0)
+    handle = await fs.open(absolutePath, "r");
+    const buffer = Buffer.alloc(1024);
+    const { bytesRead } = await handle.read(buffer, 0, 1024, 0);
+    return buffer.subarray(0, bytesRead).includes(0);
   } catch {
-    return true
+    return true;
   } finally {
-    await handle?.close()
+    await handle?.close();
   }
 }
 
 interface WalkState {
-  root: string
-  matcher: Ignore
-  fileCount: number
-  skippedCount: number
+  root: string;
+  matcher: Ignore;
+  fileCount: number;
+  skippedCount: number;
 }
 
-async function walk(absoluteDir: string, relativeDir: string, state: WalkState): Promise<FileNode[]> {
-  let entries: import('node:fs').Dirent[]
+async function walk(
+  absoluteDir: string,
+  relativeDir: string,
+  state: WalkState,
+): Promise<FileNode[]> {
+  let entries: import("node:fs").Dirent[];
   try {
-    entries = await fs.readdir(absoluteDir, { withFileTypes: true })
+    entries = await fs.readdir(absoluteDir, { withFileTypes: true });
   } catch {
-    return []
+    return [];
   }
 
-  const directories: FileNode[] = []
-  const files: FileNode[] = []
+  const directories: FileNode[] = [];
+  const files: FileNode[] = [];
 
   for (const entry of entries) {
-    const relative = relativeDir === '' ? entry.name : `${relativeDir}/${entry.name}`
-    const absolute = path.join(absoluteDir, entry.name)
-    const posixRelative = toPosix(relative)
+    const relative =
+      relativeDir === "" ? entry.name : `${relativeDir}/${entry.name}`;
+    const absolute = path.join(absoluteDir, entry.name);
+    const posixRelative = toPosix(relative);
 
     if (entry.isSymbolicLink()) {
-      state.skippedCount += 1
-      continue
+      state.skippedCount += 1;
+      continue;
     }
 
     if (entry.isDirectory()) {
-      if (ALWAYS_SKIP.has(entry.name) || state.matcher.ignores(`${posixRelative}/`)) {
-        state.skippedCount += 1
-        continue
+      if (
+        ALWAYS_SKIP.has(entry.name) ||
+        state.matcher.ignores(`${posixRelative}/`)
+      ) {
+        state.skippedCount += 1;
+        continue;
       }
-      const children = await walk(absolute, relative, state)
-      if (children.length === 0) continue
+      const children = await walk(absolute, relative, state);
+      if (children.length === 0) continue;
       directories.push({
         id: posixRelative,
         name: entry.name,
         path: posixRelative,
-        type: 'directory',
+        type: "directory",
         children,
         selected: false,
-        expanded: relativeDir === '',
-      })
-      continue
+        expanded: relativeDir === "",
+      });
+      continue;
     }
 
-    if (!entry.isFile()) continue
+    if (!entry.isFile()) continue;
     if (ALWAYS_SKIP.has(entry.name) || state.matcher.ignores(posixRelative)) {
-      state.skippedCount += 1
-      continue
+      state.skippedCount += 1;
+      continue;
     }
-    // Our own `.bak` artifacts are intentionally invisible in the tree. They
-    // are not user-selectable content and would only clutter a prompt.
-    if (isBackupFileName(entry.name)) continue
+    // Legacy backup files from before Git source control. Hidden, but not
+    // created or cleaned by this version of the app.
+    if (LEGACY_BACKUP_FILE.test(entry.name)) continue;
     if (await isBinaryFile(absolute)) {
-      state.skippedCount += 1
-      continue
+      state.skippedCount += 1;
+      continue;
     }
 
-    let size: number | undefined
+    let size: number | undefined;
     try {
-      size = (await fs.stat(absolute)).size
+      size = (await fs.stat(absolute)).size;
     } catch {
-      size = undefined
+      size = undefined;
     }
 
-    state.fileCount += 1
+    state.fileCount += 1;
     files.push({
       id: posixRelative,
       name: entry.name,
       path: posixRelative,
-      type: 'file',
+      type: "file",
       selected: false,
       expanded: false,
       size,
@@ -208,232 +269,142 @@ async function walk(absoluteDir: string, relativeDir: string, state: WalkState):
       // rather than `false` on the common case keeps the IPC payload small
       // for projects that have no sensitive files at all.
       ...(isSensitiveFileName(entry.name) ? { sensitive: true } : {}),
-    })
+    });
   }
 
-  const byName = (a: FileNode, b: FileNode): number => a.name.localeCompare(b.name)
-  return [...directories.sort(byName), ...files.sort(byName)]
+  const byName = (a: FileNode, b: FileNode): number =>
+    a.name.localeCompare(b.name);
+  return [...directories.sort(byName), ...files.sort(byName)];
 }
 
 /** Recursively scan a project root, honouring .gitignore and the skip list. */
 export async function scanDirectory(root: string): Promise<ScanResult> {
-  const absoluteRoot = path.resolve(root)
-  const matcher = await loadGitignore(absoluteRoot)
-  const state: WalkState = { root: absoluteRoot, matcher, fileCount: 0, skippedCount: 0 }
-  const children = await walk(absoluteRoot, '', state)
+  const absoluteRoot = path.resolve(root);
+  const matcher = await loadGitignore(absoluteRoot);
+  const state: WalkState = {
+    root: absoluteRoot,
+    matcher,
+    fileCount: 0,
+    skippedCount: 0,
+  };
+  const children = await walk(absoluteRoot, "", state);
 
   return {
     root: absoluteRoot,
     tree: {
-      id: '',
+      id: "",
       name: path.basename(absoluteRoot) || absoluteRoot,
-      path: '',
-      type: 'directory',
+      path: "",
+      type: "directory",
       children,
       selected: false,
       expanded: true,
     },
     fileCount: state.fileCount,
     skippedCount: state.skippedCount,
-  }
+  };
 }
 
-export async function readTextFile(root: string, relativePath: string): Promise<string> {
-  return fs.readFile(resolveWithinRoot(root, relativePath), 'utf8')
+export async function readTextFile(
+  root: string,
+  relativePath: string,
+): Promise<string> {
+  return fs.readFile(resolveWithinRoot(root, relativePath), "utf8");
 }
 
-export async function fileExists(root: string, relativePath: string): Promise<boolean> {
+export async function fileExists(
+  root: string,
+  relativePath: string,
+): Promise<boolean> {
   try {
-    await fs.stat(resolveWithinRoot(root, relativePath))
-    return true
+    await fs.stat(resolveWithinRoot(root, relativePath));
+    return true;
   } catch {
-    return false
+    return false;
   }
 }
 
 /** Write an arbitrary file (used for "save prompt as"), creating parents. */
-export async function writeFileEnsuringDir(absolutePath: string, content: string): Promise<void> {
-  await fs.mkdir(path.dirname(absolutePath), { recursive: true })
-  await fs.writeFile(absolutePath, content, 'utf8')
+export async function writeFileEnsuringDir(
+  absolutePath: string,
+  content: string,
+): Promise<void> {
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+  await fs.writeFile(absolutePath, content, "utf8");
 }
 
 export interface WriteOutcome {
-  status: 'created' | 'overwritten' | 'skipped'
-  backupPath?: string
-}
-
-/** `20250914T120000` — collision suffix for a .bak that already exists. */
-export function backupTimestamp(now: Date = new Date()): string {
-  return now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '')
+  status: "created" | "overwritten" | "skipped";
 }
 
 /**
- * Write one project-relative file, backing up any existing version first and
- * renaming into place so a crash cannot leave a half-written file.
- *
- * Content is written byte-for-byte as given; nothing is normalized.
+ * Write one project-relative file. Content is written byte-for-byte as
+ * given; nothing is normalized. When the on-disk content already matches
+ * `content`, the write is a no-op reported as `skipped` — that keeps
+ * callers from taking needless follow-up actions (a Git status refresh, a
+ * notice banner) when nothing actually changed.
  */
-export async function writeFileWithBackup(
+export async function writeFile(
   root: string,
   relativePath: string,
   content: string,
 ): Promise<WriteOutcome> {
-  const absolute = resolveWithinRoot(root, relativePath)
+  const absolute = resolveWithinRoot(root, relativePath);
 
-  let existing: string | null = null
+  let existing: string | null = null;
   try {
-    existing = await fs.readFile(absolute, 'utf8')
+    existing = await fs.readFile(absolute, "utf8");
   } catch {
-    // Nothing on disk yet — `existing` stays null and no backup is written.
+    // Nothing on disk yet.
   }
 
   if (existing === content) {
-    return { status: 'skipped' }
+    return { status: "skipped" };
   }
 
-  await fs.mkdir(path.dirname(absolute), { recursive: true })
+  await fs.mkdir(path.dirname(absolute), { recursive: true });
 
-  let backupPath: string | undefined
-  if (existing !== null) {
-    const candidate = `${absolute}.bak`
-    let target = candidate
-    try {
-      await fs.access(candidate)
-      target = `${candidate}.${backupTimestamp()}`
-    } catch {
-      // No previous backup — the plain .bak name is free.
-    }
-    await fs.copyFile(absolute, target)
-    backupPath = toPosix(path.relative(path.resolve(root), target))
-  }
-
-  // Preferred path: write to a sibling temp file and rename into place so a
-  // crash mid-write cannot leave a truncated file.
-  //
-  // The rename is the fragile half on Windows — `MoveFileEx` with
+  // Prefer temp file + rename so a crash mid-write cannot leave a truncated
+  // file. The rename is the fragile half on Windows — `MoveFileEx` with
   // REPLACE_EXISTING is refused with EPERM/EBUSY when the destination is
   // briefly locked by an indexer, an antivirus scan, or another handle that
   // has not yet been released. Since the alternative is losing the user's
   // save entirely, fall back to a direct in-place write whenever either the
   // temp write or the rename fails.
-  const temporary = `${absolute}.tmp`
+  const temporary = `${absolute}.tmp`;
   try {
-    await fs.writeFile(temporary, content, 'utf8')
-    await fs.rename(temporary, absolute)
+    await fs.writeFile(temporary, content, "utf8");
+    await fs.rename(temporary, absolute);
   } catch {
-    await fs.rm(temporary, { force: true }).catch(() => undefined)
-    await fs.writeFile(absolute, content, 'utf8')
+    await fs.rm(temporary, { force: true }).catch(() => undefined);
+    await fs.writeFile(absolute, content, "utf8");
   }
 
-  return backupPath === undefined
-    ? { status: 'created' }
-    : { status: 'overwritten', backupPath }
+  return { status: existing === null ? "created" : "overwritten" };
 }
 
 export interface DeleteOutcome {
-  status: 'deleted' | 'not-found'
-  backupPath?: string
+  status: "deleted" | "not-found";
 }
 
 /**
- * Remove one project-relative file, preserving its content as a `.bak`
- * sibling so the change is reversible. The `.bak` name reuses the same
- * naming scheme as `writeFileWithBackup`, so the tree already hides it and
- * the "clean backups" sweep already removes it later.
+ * Remove one project-relative file. Returns `not-found` rather than throwing
+ * when the target is missing — a delete directive against a file that no
+ * longer exists is a no-op, not an error worth failing the whole apply over.
  *
- * Returns `not-found` rather than throwing when the target is missing — a
- * delete directive against a file that no longer exists is a no-op, not an
- * error worth failing the whole apply over.
+ * Version history is provided by Git source control, not by `.bak` siblings;
+ * nothing is preserved here beyond what the user can recover from their own
+ * commits.
  */
-export async function deleteFileWithBackup(
+export async function deleteFile(
   root: string,
   relativePath: string,
 ): Promise<DeleteOutcome> {
-  const absolute = resolveWithinRoot(root, relativePath)
-
+  const absolute = resolveWithinRoot(root, relativePath);
   try {
-    await fs.access(absolute)
+    await fs.unlink(absolute);
+    return { status: "deleted" };
   } catch {
-    return { status: 'not-found' }
+    return { status: "not-found" };
   }
-
-  const candidate = `${absolute}.bak`
-  let target = candidate
-  try {
-    await fs.access(candidate)
-    target = `${candidate}.${backupTimestamp()}`
-  } catch {
-    // No previous backup — the plain .bak name is free.
-  }
-
-  // Rename is preferred (single atomic step on POSIX) but refused on Windows
-  // when the destination is briefly locked. Fall back to copy + unlink,
-  // which is slower but tolerant of a transient lock — and still leaves the
-  // user with a recoverable backup of the deleted content either way.
-  try {
-    await fs.rename(absolute, target)
-  } catch {
-    await fs.copyFile(absolute, target)
-    await fs.unlink(absolute)
-  }
-
-  return {
-    status: 'deleted',
-    backupPath: toPosix(path.relative(path.resolve(root), target)),
-  }
-}
-
-/**
- * Delete every `.bak` backup file under `root` that this app generated. The
- * same skip list and .gitignore rules that govern scanning apply here: a
- * backup hidden inside `node_modules/` or an ignored directory is left alone.
- *
- * Failures per file are collected rather than thrown — one locked file must
- * not abort the whole sweep.
- */
-export async function cleanBackupFiles(root: string): Promise<CleanBackupsResult> {
-  const absoluteRoot = path.resolve(root)
-  const matcher = await loadGitignore(absoluteRoot)
-  const paths: string[] = []
-  const errors: Array<{ path: string; error: string }> = []
-
-  const visit = async (absoluteDir: string, relativeDir: string): Promise<void> => {
-    let entries: import('node:fs').Dirent[]
-    try {
-      entries = await fs.readdir(absoluteDir, { withFileTypes: true })
-    } catch {
-      return
-    }
-
-    for (const entry of entries) {
-      const relative = relativeDir === '' ? entry.name : `${relativeDir}/${entry.name}`
-      const absolute = path.join(absoluteDir, entry.name)
-      const posixRelative = toPosix(relative)
-
-      if (entry.isSymbolicLink()) continue
-
-      if (entry.isDirectory()) {
-        if (ALWAYS_SKIP.has(entry.name) || matcher.ignores(`${posixRelative}/`)) continue
-        await visit(absolute, relative)
-        continue
-      }
-
-      if (!entry.isFile()) continue
-      if (matcher.ignores(posixRelative)) continue
-      if (!isBackupFileName(entry.name)) continue
-
-      try {
-        await fs.unlink(absolute)
-        paths.push(posixRelative)
-      } catch (error) {
-        errors.push({
-          path: posixRelative,
-          error: error instanceof Error ? error.message : String(error),
-        })
-      }
-    }
-  }
-
-  await visit(absoluteRoot, '')
-  return { deleted: paths.length, paths, errors }
 }

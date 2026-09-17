@@ -228,6 +228,19 @@ export async function stageFile(root: string, relativePath: string): Promise<voi
   }
 }
 
+/**
+ * Stage every change in the working tree — modified, added, deleted, and
+ * untracked. The panel-level "Stage all" action. Uses `-A` rather than `.`
+ * so a deletion is staged as a deletion; `git add .` would leave the
+ * deletion half-done and require a second command.
+ */
+export async function stageAllFiles(root: string): Promise<void> {
+  const result = await runGit(root, ['add', '-A'])
+  if (!result.ok) {
+    throw new Error(result.stderr.trim() || 'git add -A failed.')
+  }
+}
+
 export async function unstageFile(root: string, relativePath: string): Promise<void> {
   // `git restore --staged` is the modern form. Fall back to the legacy
   // `git reset HEAD --` on Git versions that predate `restore` (pre-2.23),
@@ -253,6 +266,23 @@ export async function discardFile(root: string, relativePath: string): Promise<v
   const legacy = await runGit(root, ['checkout', '--', relativePath])
   if (!legacy.ok) {
     throw new Error(legacy.stderr.trim() || 'git discard failed.')
+  }
+}
+
+/**
+ * Discard every unstaged change to a tracked file, restoring the working
+ * tree to the index version. Untracked files are deliberately left alone —
+ * they have no index entry to restore from, and silently deleting them
+ * would be a far larger and more surprising operation than "undo my edits".
+ * Staged changes are also left alone; the caller decides whether to unstage
+ * them separately.
+ */
+export async function discardAllFiles(root: string): Promise<void> {
+  const modern = await runGit(root, ['restore', '--worktree', '.'])
+  if (modern.ok) return
+  const legacy = await runGit(root, ['checkout', '--', '.'])
+  if (!legacy.ok) {
+    throw new Error(legacy.stderr.trim() || 'git discard all failed.')
   }
 }
 

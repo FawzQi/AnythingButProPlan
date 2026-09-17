@@ -97,7 +97,7 @@ function Row({
             onDelete(node.path);
           }}
           disabled={deletingPath === node.path}
-          title="Delete this file (a .bak copy is kept)"
+          title="Delete this file"
           aria-label={`Delete ${node.path}`}
           className="ml-auto shrink-0 rounded px-1 text-xs text-slate-500 opacity-0 transition-opacity hover:bg-red-900/40 hover:text-red-300 focus:opacity-100 group-hover:opacity-100 disabled:opacity-40"
         >
@@ -112,7 +112,6 @@ export function FileTree({ width }: { width: number }): ReactElement {
   const tree = useAppStore((state) => state.tree);
   const projectRoot = useAppStore((state) => state.projectRoot);
   const scanning = useAppStore((state) => state.scanning);
-  const cleaning = useAppStore((state) => state.cleaning);
   const openProject = useAppStore((state) => state.openProject);
   const refreshProject = useAppStore((state) => state.refreshProject);
   const openTerminal = useAppStore((state) => state.openTerminal);
@@ -120,7 +119,6 @@ export function FileTree({ width }: { width: number }): ReactElement {
   const toggleExpanded = useAppStore((state) => state.toggleExpanded);
   const selectAll = useAppStore((state) => state.selectAll);
   const openFileForEdit = useAppStore((state) => state.openFileForEdit);
-  const cleanBackups = useAppStore((state) => state.cleanBackups);
   const deleteFileFromTree = useAppStore((state) => state.deleteFileFromTree);
   const deletingPath = useAppStore((state) => state.deletingPath);
 
@@ -189,20 +187,6 @@ export function FileTree({ width }: { width: number }): ReactElement {
             aria-label="Open terminal at project root"
           >
             &gt;_
-          </Button>
-          <Button
-            variant="ghost"
-            className={COMPACT}
-            onClick={() => void cleanBackups()}
-            disabled={!projectRoot || cleaning}
-            title={
-              projectRoot
-                ? "Delete every .bak backup file LARPGent created under this project"
-                : "Open a folder first"
-            }
-            aria-label="Delete .bak backup files"
-          >
-            {cleaning ? "…" : "🗑"}
           </Button>
           <Button
             variant="primary"

@@ -118,8 +118,6 @@ export interface ApplyResult {
     | 'skipped'
     | 'failed'
   error?: string
-  /** Path of the .bak file, when one was written. */
-  backupPath?: string
 }
 
 export interface DeleteFileRequest {
@@ -130,8 +128,6 @@ export interface DeleteFileRequest {
 export interface DeleteFileResult {
   /** `not-found` when the file did not exist on disk. */
   status: 'deleted' | 'not-found'
-  /** Path of the .bak file the deleted content was preserved in. */
-  backupPath?: string
 }
 
 export interface PromptBuildRequest {
@@ -176,16 +172,6 @@ export interface WriteFileRequest {
 
 export interface WriteFileResult {
   status: 'created' | 'overwritten' | 'skipped'
-  backupPath?: string
-}
-
-export interface CleanBackupsResult {
-  /** Number of .bak files removed from disk. */
-  deleted: number
-  /** POSIX-relative paths of the removed files, for reporting. */
-  paths: string[]
-  /** Files that could not be removed, with the reason. */
-  errors: Array<{ path: string; error: string }>
 }
 
 /* ------------------------------------------------------------------------ *
