@@ -1,3 +1,4 @@
+import type { PatchBlock } from '@shared/types'
 import type { CodeBlock } from './types'
 
 // `[^\r\n]*` rather than `.*`: `.` does not match a carriage return, so a CRLF
@@ -14,6 +15,16 @@ const OPENING_FENCE = /^ {0,3}(`{3,}|~{3,})([^\r\n]*)/gm
  * header to this one, but keeping it bounded keeps the read cheap.
  */
 const PRECEDING_WINDOW = 6
+
+/**
+ * Markers for the patch dialect. Aider's SEARCH/REPLACE uses 7+ of each
+ * character, followed by the keyword, on a line by itself. Leading whitespace
+ * is deliberately not tolerated — the whole point of anchoring to column 0 is
+ * that the markers cannot be confused with content inside the code.
+ */
+const SEARCH_OPEN = /^<{7,}\s*SEARCH\s*$/i
+const SEARCH_SEP = /^={7,}\s*$/
+const SEARCH_CLOSE = /^>{7,}\s*REPLACE\s*$/i
 
 /**
  * Pull fenced code blocks out of a raw response with a line-based state machine.
@@ -154,6 +165,146 @@ export function extractPlainBlocks(raw: string): CodeBlock[] {
   }
 
   return blocks
+}
+
+/**
+ * A `File: <path>` section that carried one or more SEARCH/REPLACE pairs.
+ * `rawBlock` is the original text of the section, so the UI can show exactly
+ * what the model wrote.
+ */
+export interface PatchSection {
+  path: string
+  patches: PatchBlock[]
+  rawBlock: string
+}
+
+/**
+ * Pull `File: <path>` sections that contain SEARCH/REPLACE pairs out of a raw
+ * response. This is the "patch" dialect of the output contract: an existing
+ * file is edited by quoting the exact substring to replace rather than
+ * restating the whole file.
+ *
+ * Sections without a well-formed pair are skipped, leaving them for the
+ * full-content strategies. The parser never mixes patch and full content for
+ * the same file — if a section has any pairs at all, all of its body is
+ * consumed as pairs.
+ */
+export function extractSearchReplaceSections(raw: string): PatchSection[] {
+  const sections: PatchSection[] = []
+  const headerPattern = /^\s*File:\s*(.+?)\s*$/gm
+
+  let match = headerPattern.exec(raw)
+  while (match) {
+    const path = match[1] ?? ''
+    const sectionStart = match.index
+    const contentStart = sectionStart + match[0].length
+
+    headerPattern.lastIndex = contentStart
+    const nextMatch = headerPattern.exec(raw)
+    const sectionEnd = nextMatch ? nextMatch.index : raw.length
+    if (nextMatch) headerPattern.lastIndex = nextMatch.index
+
+    const body = raw.slice(contentStart, sectionEnd)
+    const patches = parsePatchPairs(body)
+    if (patches.length > 0) {
+      sections.push({
+        path,
+        patches,
+        rawBlock: raw.slice(sectionStart, sectionEnd),
+      })
+    }
+
+    match = nextMatch
+  }
+
+  return sections
+}
+
+/**
+ * Line-based state machine over a `File:` section body. Only lines consisting
+ * solely of the marker shapes are honoured as boundaries, so a stray `=======`
+ * inside the search or replace content cannot end a pair early.
+ */
+function parsePatchPairs(body: string): PatchBlock[] {
+  const lines = body.split(/\r?\n/)
+  const pairs: PatchBlock[] = []
+  let index = 0
+
+  while (index < lines.length) {
+    const line = lines[index] ?? ''
+    if (!SEARCH_OPEN.test(line)) {
+      index += 1
+      continue
+    }
+
+    let separator = index + 1
+    while (separator < lines.length && !SEARCH_SEP.test(lines[separator] ?? '')) {
+      separator += 1
+    }
+    if (separator >= lines.length) break
+
+    let close = separator + 1
+    while (close < lines.length && !SEARCH_CLOSE.test(lines[close] ?? '')) {
+      close += 1
+    }
+    if (close >= lines.length) break
+
+    const search = lines.slice(index + 1, separator).join('\n')
+    const replace = lines.slice(separator + 1, close).join('\n')
+    // An empty search would match the start of the file, which is never what
+    // the model means. Reject the pair rather than splice at position 0.
+    if (search.length > 0) pairs.push({ search, replace })
+    index = close + 1
+  }
+
+  return pairs
+}
+
+/**
+ * Pull `Delete: <path>` directives out of a response. The line must sit in
+ * the prose between fenced blocks — a code body that legitimately contains
+ * `Delete: something` (a migration script, an ORM model) must not be mistaken
+ * for a directive, so fenced regions are stripped before scanning.
+ *
+ * The check is deliberately loose about where the line sits: the output
+ * contract allows the AI to interleave deletes with file entries in any
+ * order, and the marker itself is unambiguous, so no further structural
+ * parsing is needed.
+ */
+export function extractDeletePaths(raw: string): string[] {
+  const stripped = stripFencedRegions(raw)
+  const paths: string[] = []
+  const pattern = /^\s*Delete:\s*(.+?)\s*$/gim
+  let match = pattern.exec(stripped)
+  while (match) {
+    const path = (match[1] ?? '').trim()
+    if (path !== '') paths.push(path)
+    match = pattern.exec(stripped)
+  }
+  return paths
+}
+
+/**
+ * Replace every fenced code block in `raw` with the same number of newlines,
+ * preserving line structure for the rest of the scan. Offsets of the prose
+ * between blocks are also preserved, so a caller could splice the result
+ * back into `raw` if it ever needed to.
+ */
+function stripFencedRegions(raw: string): string {
+  const blocks = extractCodeBlocks(raw)
+  if (blocks.length === 0) return raw
+  const parts: string[] = []
+  let cursor = 0
+  for (const block of blocks) {
+    const start = raw.indexOf(block.rawBlock, cursor)
+    if (start === -1) continue
+    parts.push(raw.slice(cursor, start))
+    const newlineCount = (block.rawBlock.match(/\n/g) ?? []).length
+    parts.push('\n'.repeat(newlineCount))
+    cursor = start + block.rawBlock.length
+  }
+  parts.push(raw.slice(cursor))
+  return parts.join('')
 }
 
 /** Drop the single line terminator that separates content from the closing fence. */

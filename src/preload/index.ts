@@ -4,6 +4,8 @@ import type {
   ApplyRequest,
   ApplyResult,
   CleanBackupsResult,
+  DeleteFileRequest,
+  DeleteFileResult,
   DiffRequest,
   DiffResult,
   ParseResult,
@@ -34,6 +36,8 @@ const api = {
     ipcRenderer.invoke(IpcChannel.ReadFile, root, relativePath),
   writeFile: (request: WriteFileRequest): Promise<WriteFileResult> =>
     ipcRenderer.invoke(IpcChannel.WriteFile, request),
+  deleteFile: (request: DeleteFileRequest): Promise<DeleteFileResult> =>
+    ipcRenderer.invoke(IpcChannel.DeleteFile, request),
   diffFile: (request: DiffRequest): Promise<DiffResult> =>
     ipcRenderer.invoke(IpcChannel.DiffFile, request),
   applyFiles: (request: ApplyRequest): Promise<ApplyResult[]> =>

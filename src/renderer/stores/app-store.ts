@@ -29,6 +29,12 @@ interface AppState {
   tokenCount: number;
   promptFileCount: number;
   unreadable: string[];
+  /**
+   * Files in the last-built prompt whose names match a sensitive-file pattern.
+   * The UI surfaces these so the user knows what they are about to paste into
+   * a chat UI. Never used to filter — the prompt already contains them.
+   */
+  sensitiveFiles: string[];
   building: boolean;
   customPrompt: string;
 
@@ -48,6 +54,12 @@ interface AppState {
   saving: boolean;
 
   cleaning: boolean;
+  /**
+   * Path of the file currently being removed by the tree's delete button.
+   * `null` when no delete is in flight. Kept separate from `saving` so the
+   * two operations cannot wedge each other.
+   */
+  deletingPath: string | null;
 
   notice: string | null;
   error: string | null;
@@ -73,6 +85,7 @@ interface AppState {
   saveEditingFile: () => Promise<void>;
   revertEditingFile: () => void;
   cleanBackups: () => Promise<void>;
+  deleteFileFromTree: (path: string) => Promise<void>;
   clearNotice: () => void;
 }
 
@@ -99,6 +112,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   tokenCount: 0,
   promptFileCount: 0,
   unreadable: [],
+  sensitiveFiles: [],
   building: false,
   customPrompt: "",
 
@@ -117,6 +131,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   saving: false,
 
   cleaning: false,
+  deletingPath: null,
 
   notice: null,
   error: null,
@@ -136,6 +151,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         tokenCount: 0,
         promptFileCount: 0,
         unreadable: [],
+        sensitiveFiles: [],
         // The previously-open file belongs to the old project; drop it rather
         // than leaving a stale path pointing into a tree that no longer exists.
         editingPath: null,
@@ -207,20 +223,29 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   buildPrompt: async () => {
     const { projectRoot, tree } = get();
-    if (!projectRoot || !tree) return;
-    const files = collectSelectedPaths(tree);
-    if (files.length === 0) {
+    // With no project open there are no files to include, but the base
+    // prompt — the output contract alone — is still useful: the user may be
+    // starting a fresh project and just wants the instruction block, with
+    // the additional instructions appended by the PromptTab, to paste
+    // somewhere. Only require a selection when there *is* a project to
+    // select from.
+    const files = projectRoot && tree ? collectSelectedPaths(tree) : [];
+    if (projectRoot && files.length === 0) {
       set({ error: "Select at least one file first." });
       return;
     }
     try {
       set({ building: true, error: null });
-      const result = await window.LARPGent.buildPrompt({ projectRoot, files });
+      const result = await window.LARPGent.buildPrompt({
+        projectRoot: projectRoot ?? "",
+        files,
+      });
       set({
         prompt: result.prompt,
         tokenCount: result.tokenCount,
         promptFileCount: result.fileCount,
         unreadable: result.unreadable,
+        sensitiveFiles: result.sensitiveFiles,
         building: false,
       });
     } catch (error) {
@@ -298,7 +323,18 @@ export const useAppStore = create<AppState>((set, get) => ({
         ): entry is { file: ParsedFile & { path: string }; key: string } =>
           entry.file.path !== null && includes[entry.key] === true,
       )
-      .map((entry) => ({ path: entry.file.path, content: entry.file.content }));
+      .map((entry) => ({
+        path: entry.file.path,
+        content: entry.file.content,
+        // Patch files carry a SEARCH/REPLACE payload instead of full content;
+        // the applier branches on the presence of this field.
+        ...(entry.file.patches && entry.file.patches.length > 0
+          ? { patches: entry.file.patches }
+          : {}),
+        // A delete directive carries no payload at all — the flag alone
+        // tells the applier to rename the file to a `.bak` sibling.
+        ...(entry.file.delete === true ? { delete: true as const } : {}),
+      }));
 
     if (files.length === 0) {
       set({ error: "No files selected to apply." });
@@ -419,6 +455,49 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
     } catch (error) {
       set({ cleaning: false, error: message(error) });
+    }
+  },
+
+  deleteFileFromTree: async (path) => {
+    const { projectRoot, editingPath } = get();
+    if (!projectRoot) return;
+    const confirmed = window.confirm(
+      `Delete ${path}?\n\n` +
+        "Its contents are preserved as a .bak sibling so the change can be undone outside the app.",
+    );
+    if (!confirmed) return;
+    try {
+      set({ deletingPath: path, error: null });
+      const result = await window.LARPGent.deleteFile({
+        projectRoot,
+        path,
+      });
+      if (result.status === "not-found") {
+        set({
+          deletingPath: null,
+          notice: `${path} was already gone.`,
+        });
+      } else {
+        set({
+          deletingPath: null,
+          notice:
+            `Deleted ${path}` +
+            (result.backupPath ? ` (backup: ${result.backupPath}).` : "."),
+        });
+      }
+      // The deleted file must not linger in the tree, and if it was open in
+      // the editor the buffer now points at a file that no longer exists.
+      if (editingPath === path) {
+        set({
+          editingPath: null,
+          editingContent: "",
+          editingOriginal: "",
+          editingLoading: false,
+        });
+      }
+      await get().refreshProject();
+    } catch (error) {
+      set({ deletingPath: null, error: message(error) });
     }
   },
 

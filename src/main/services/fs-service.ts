@@ -42,6 +42,29 @@ export function isBackupFileName(name: string): boolean {
   return BACKUP_FILE.test(name)
 }
 
+/**
+ * Files whose names routinely carry secrets: API keys, private keys, cloud
+ * credentials, package-registry tokens. They remain visible in the tree —
+ * silently hiding them would make a project look incomplete and would push
+ * users to a terminal to find them — but the tree marks them and the prompt
+ * build reports them so the user always knows what is about to be pasted
+ * into a chat UI.
+ *
+ * The name-side match is specific (`.env`, `id_rsa`, …) and the extension-
+ * side match is broad (`*.pem`, `*.key`, …). Template variants like
+ * `.env.example` and `secrets.sample.toml` are excluded: they describe the
+ * shape of a secret, not the secret itself, and they are exactly the kind
+ * of file users legitimately want to send to the AI.
+ */
+const SENSITIVE_FILE_NAME = /^(?:\.env(?:\.[a-zA-Z0-9_-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|\.?_?netrc|\.(?:npmrc|pypirc|pgpass|htpasswd|git-credentials)|credentials\.json|service-account[\w.-]*\.json)$/i
+const SENSITIVE_FILE_EXTENSION = /\.(?:pem|key|p12|pfx|keystore|jks|kdbx)$/i
+const SAFE_TEMPLATE_NAME = /\.(?:example|sample|template|dist|defaults)(?:\.[a-z0-9]+)*$/i
+
+export function isSensitiveFileName(name: string): boolean {
+  if (SAFE_TEMPLATE_NAME.test(name)) return false
+  return SENSITIVE_FILE_NAME.test(name) || SENSITIVE_FILE_EXTENSION.test(name)
+}
+
 export function toPosix(value: string): string {
   return value.split(path.sep).join('/')
 }
@@ -180,6 +203,11 @@ async function walk(absoluteDir: string, relativeDir: string, state: WalkState):
       selected: false,
       expanded: false,
       size,
+      // Set once here rather than re-derived in the renderer, so every
+      // consumer of the tree agrees on what "sensitive" means. `undefined`
+      // rather than `false` on the common case keeps the IPC payload small
+      // for projects that have no sensitive files at all.
+      ...(isSensitiveFileName(entry.name) ? { sensitive: true } : {}),
     })
   }
 
@@ -300,6 +328,59 @@ export async function writeFileWithBackup(
   return backupPath === undefined
     ? { status: 'created' }
     : { status: 'overwritten', backupPath }
+}
+
+export interface DeleteOutcome {
+  status: 'deleted' | 'not-found'
+  backupPath?: string
+}
+
+/**
+ * Remove one project-relative file, preserving its content as a `.bak`
+ * sibling so the change is reversible. The `.bak` name reuses the same
+ * naming scheme as `writeFileWithBackup`, so the tree already hides it and
+ * the "clean backups" sweep already removes it later.
+ *
+ * Returns `not-found` rather than throwing when the target is missing — a
+ * delete directive against a file that no longer exists is a no-op, not an
+ * error worth failing the whole apply over.
+ */
+export async function deleteFileWithBackup(
+  root: string,
+  relativePath: string,
+): Promise<DeleteOutcome> {
+  const absolute = resolveWithinRoot(root, relativePath)
+
+  try {
+    await fs.access(absolute)
+  } catch {
+    return { status: 'not-found' }
+  }
+
+  const candidate = `${absolute}.bak`
+  let target = candidate
+  try {
+    await fs.access(candidate)
+    target = `${candidate}.${backupTimestamp()}`
+  } catch {
+    // No previous backup — the plain .bak name is free.
+  }
+
+  // Rename is preferred (single atomic step on POSIX) but refused on Windows
+  // when the destination is briefly locked. Fall back to copy + unlink,
+  // which is slower but tolerant of a transient lock — and still leaves the
+  // user with a recoverable backup of the deleted content either way.
+  try {
+    await fs.rename(absolute, target)
+  } catch {
+    await fs.copyFile(absolute, target)
+    await fs.unlink(absolute)
+  }
+
+  return {
+    status: 'deleted',
+    backupPath: toPosix(path.relative(path.resolve(root), target)),
+  }
 }
 
 /**

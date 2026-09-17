@@ -11,6 +11,7 @@ export const IpcChannel = {
   CountTokens: 'prompt:count-tokens',
   ReadFile: 'fs:read-file',
   WriteFile: 'fs:write-file',
+  DeleteFile: 'fs:delete-file',
   DiffFile: 'fs:diff-file',
   ApplyFiles: 'fs:apply-files',
   SavePrompt: 'fs:save-prompt',

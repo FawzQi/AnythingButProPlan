@@ -37,6 +37,7 @@ function PromptTab(): ReactElement {
   const tokenCount = useAppStore((state) => state.tokenCount)
   const promptFileCount = useAppStore((state) => state.promptFileCount)
   const unreadable = useAppStore((state) => state.unreadable)
+  const sensitiveFiles = useAppStore((state) => state.sensitiveFiles)
   const customPrompt = useAppStore((state) => state.customPrompt)
   const setCustomPrompt = useAppStore((state) => state.setCustomPrompt)
 
@@ -87,10 +88,23 @@ function PromptTab(): ReactElement {
         </div>
       ) : null}
 
+      {sensitiveFiles.length > 0 ? (
+        <div className="p-2">
+          <Banner tone="error">
+            This prompt includes {sensitiveFiles.length} file(s) that likely
+            contain secrets: {sensitiveFiles.join(', ')}. Deselect them in the
+            project tree if they should not be sent to the AI.
+          </Banner>
+        </div>
+      ) : null}
+
       <div className="min-h-0 flex-1">
         {prompt === '' ? (
           <p className="p-3 text-xs text-slate-500">
-            Select files in the tree, then generate the prompt.
+            Generate a prompt to start. With a project open, only the files
+            selected in the tree are included; with no project open, the
+            prompt contains the output contract and your additional
+            instructions alone.
           </p>
         ) : (
           <Editor

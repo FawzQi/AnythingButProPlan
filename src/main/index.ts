@@ -21,8 +21,19 @@ function createWindow(): BrowserWindow {
 
   window.on("ready-to-show", () => window.show());
 
+  // `shell.openExternal` will hand the URL to the OS, which dispatches on the
+  // scheme. Passing an attacker-controlled URL — including `file://`,
+  // `smb://`, `vbscript:`, or any registered custom handler — is a documented
+  // Electron privilege-escalation risk: a compromised or XSS'd renderer could
+  // launch local programs, mount network shares, or trigger protocol handlers
+  // without a prompt. Restricting to http(s) matches the only legitimate use
+  // (opening a documentation or search link), and any other scheme is
+  // silently dropped instead of refused with an error banner the user cannot
+  // act on.
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (/^https?:\/\//i.test(url)) {
+      void shell.openExternal(url);
+    }
     return { action: "deny" };
   });
 

@@ -3,7 +3,7 @@ import Handlebars from 'handlebars'
 import { countTokens } from 'gpt-tokenizer'
 import type { PromptBuildResult } from '@shared/types'
 import templateSource from '../../../resources/prompt-templates/default.hbs?raw'
-import { readTextFile } from './fs-service'
+import { isSensitiveFileName, readTextFile } from './fs-service'
 
 /** Fence language derived from the file extension; falls back to `text`. */
 const EXTENSION_LANGUAGES: Record<string, string> = {
@@ -108,11 +108,17 @@ export async function buildPrompt(
 ): Promise<PromptBuildResult> {
   const files: PromptFile[] = []
   const unreadable: string[] = []
+  const sensitiveFiles: string[] = []
 
   for (const filePath of filePaths) {
     try {
       const content = await readTextFile(projectRoot, filePath)
       files.push({ path: filePath, language: languageForPath(filePath), content })
+      // Report but never drop: the user asked for this file, so the prompt
+      // includes it. The warning is the safety net, not silent exclusion.
+      if (isSensitiveFileName(path.basename(filePath))) {
+        sensitiveFiles.push(filePath)
+      }
     } catch {
       unreadable.push(filePath)
     }
@@ -128,5 +134,6 @@ export async function buildPrompt(
     tokenCount: countTokens(prompt),
     fileCount: files.length,
     unreadable,
+    sensitiveFiles,
   }
 }

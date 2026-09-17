@@ -14,6 +14,13 @@ export interface FileNode {
   expanded: boolean
   /** Byte size for files; undefined for directories. */
   size?: number
+  /**
+   * True when the file's name matches a pattern for files that routinely
+   * carry secrets (`.env`, `id_rsa`, `*.pem`, `credentials.json`, …). The
+   * tree renders these with a warning indicator and the prompt build reports
+   * them, so the user always knows what is about to be pasted into a chat.
+   */
+  sensitive?: boolean
 }
 
 export interface ScanResult {
@@ -31,21 +38,53 @@ export type PathSource =
   | 'first-line-comment'
   | 'preceding-text'
   | 'language-hint'
+  | 'delete-header'
   | 'user'
+
+/**
+ * One SEARCH/REPLACE pair. The SEARCH text is matched against the file on
+ * disk as an exact substring first, then — if that fails — as a
+ * whitespace-tolerant line match. A pair that matches neither way is
+ * rejected; the applier never guesses.
+ */
+export interface PatchBlock {
+  search: string
+  replace: string
+}
 
 export interface ParsedFile {
   /** null = ambiguous, needs user input. */
   path: string | null
-  /** Raw code, unmodified — never normalized or reformatted. */
+  /**
+   * Full content for a new/rewritten file; the rendered patch text (for
+   * display) when `patches` is set.
+   */
   content: string
   language: string | null
   pathSource: PathSource
   ambiguous: boolean
   /** Original text for debugging. */
   rawBlock: string
+  /**
+   * SEARCH/REPLACE pairs the AI emitted for an existing file. When present
+   * and non-empty, the applier reads the file from disk, applies each pair in
+   * order, and writes the result — `content` is ignored.
+   */
+  patches?: PatchBlock[]
+  /**
+   * When true, this entry is a delete directive (`Delete: <path>` in the
+   * response): the applier renames the file to a `.bak` sibling rather than
+   * writing `content` or applying `patches`.
+   */
+  delete?: boolean
 }
 
-export type ParseStrategy = 'xml' | 'markdown' | 'plaintext' | 'user-assisted'
+export type ParseStrategy =
+  | 'markdown'
+  | 'patch'
+  | 'plaintext'
+  | 'delete'
+  | 'user-assisted'
 
 export interface ParseResult {
   files: ParsedFile[]
@@ -53,16 +92,46 @@ export interface ParseResult {
   warnings: string[]
 }
 
+export interface ApplyFileInput {
+  path: string
+  /** Ignored when `patches` is present and non-empty, and when `delete` is set. */
+  content: string
+  patches?: PatchBlock[]
+  /**
+   * When true, the applier deletes `path` (renaming it to a `.bak` sibling so
+   * the change is reversible) instead of writing any content.
+   */
+  delete?: boolean
+}
+
 export interface ApplyRequest {
   projectRoot: string
-  files: Array<{ path: string; content: string }>
+  files: ApplyFileInput[]
 }
 
 export interface ApplyResult {
   path: string
-  status: 'created' | 'overwritten' | 'skipped' | 'failed'
+  status:
+    | 'created'
+    | 'overwritten'
+    | 'patched'
+    | 'deleted'
+    | 'skipped'
+    | 'failed'
   error?: string
   /** Path of the .bak file, when one was written. */
+  backupPath?: string
+}
+
+export interface DeleteFileRequest {
+  projectRoot: string
+  path: string
+}
+
+export interface DeleteFileResult {
+  /** `not-found` when the file did not exist on disk. */
+  status: 'deleted' | 'not-found'
+  /** Path of the .bak file the deleted content was preserved in. */
   backupPath?: string
 }
 
@@ -78,6 +147,13 @@ export interface PromptBuildResult {
   fileCount: number
   /** Files that were selected but could not be read. */
   unreadable: string[]
+  /**
+   * Selected files whose names match a sensitive-file pattern. They are
+   * included in `prompt` like any other file — the point is to surface them,
+   * not to silently drop them — but the UI warns about them so the user can
+   * deselect before copying.
+   */
+  sensitiveFiles: string[]
 }
 
 export interface DiffRequest {

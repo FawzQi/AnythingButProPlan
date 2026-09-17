@@ -17,6 +17,8 @@ interface RowData {
   onToggle: (id: string, selected: boolean) => void;
   onExpand: (id: string) => void;
   onOpenFile: (path: string) => void;
+  onDelete: (path: string) => void;
+  deletingPath: string | null;
 }
 
 function Row({
@@ -24,7 +26,7 @@ function Row({
   style,
   data,
 }: ListChildComponentProps<RowData>): ReactElement {
-  const { rows, onToggle, onExpand, onOpenFile } = data;
+  const { rows, onToggle, onExpand, onOpenFile, onDelete, deletingPath } = data;
   const row = rows[index];
   if (!row) return <div style={style} />;
   const { node, depth } = row;
@@ -33,7 +35,7 @@ function Row({
   return (
     <div
       style={{ ...style, paddingLeft: 8 + depth * 14 }}
-      className="flex items-center gap-1.5 pr-2 text-sm hover:bg-[#23262d]"
+      className="group flex items-center gap-1.5 pr-2 text-sm hover:bg-[#23262d]"
       title={isDirectory ? node.path : `${node.path} (double-click to open)`}
       onDoubleClick={() => {
         // Directory double-clicks fall through to the expand chevron; only
@@ -63,10 +65,45 @@ function Row({
       />
 
       <span
-        className={`truncate ${isDirectory ? "font-medium text-slate-300" : "text-slate-400"}`}
+        className={`truncate ${
+          isDirectory
+            ? "font-medium text-slate-300"
+            : node.sensitive
+              ? "text-amber-300"
+              : "text-slate-400"
+        }`}
       >
         {node.name}
       </span>
+
+      {node.sensitive ? (
+        <span
+          className="shrink-0 text-xs text-amber-400"
+          title="Likely contains secrets — double-check before including in a prompt"
+          aria-label="Sensitive file"
+        >
+          ⚠
+        </span>
+      ) : null}
+
+      {!isDirectory ? (
+        <button
+          type="button"
+          // Hover-revealed so the row stays uncluttered at rest; the button
+          // is keyboard-reachable regardless, so it is not a hover-only
+          // affordance for anyone navigating by tab.
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete(node.path);
+          }}
+          disabled={deletingPath === node.path}
+          title="Delete this file (a .bak copy is kept)"
+          aria-label={`Delete ${node.path}`}
+          className="ml-auto shrink-0 rounded px-1 text-xs text-slate-500 opacity-0 transition-opacity hover:bg-red-900/40 hover:text-red-300 focus:opacity-100 group-hover:opacity-100 disabled:opacity-40"
+        >
+          {deletingPath === node.path ? "…" : "×"}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -84,6 +121,8 @@ export function FileTree({ width }: { width: number }): ReactElement {
   const selectAll = useAppStore((state) => state.selectAll);
   const openFileForEdit = useAppStore((state) => state.openFileForEdit);
   const cleanBackups = useAppStore((state) => state.cleanBackups);
+  const deleteFileFromTree = useAppStore((state) => state.deleteFileFromTree);
+  const deletingPath = useAppStore((state) => state.deletingPath);
 
   const [containerRef, size] = useElementSize<HTMLDivElement>();
   const rows = useMemo(() => (tree ? flattenTree(tree) : []), [tree]);
@@ -94,8 +133,10 @@ export function FileTree({ width }: { width: number }): ReactElement {
       onToggle: toggleNode,
       onExpand: toggleExpanded,
       onOpenFile: (path) => void openFileForEdit(path),
+      onDelete: (path) => void deleteFileFromTree(path),
+      deletingPath,
     }),
-    [rows, toggleNode, toggleExpanded, openFileForEdit],
+    [rows, toggleNode, toggleExpanded, openFileForEdit, deleteFileFromTree, deletingPath],
   );
 
   return (

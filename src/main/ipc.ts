@@ -1,11 +1,14 @@
-import { spawn } from 'node:child_process'
-import { BrowserWindow, clipboard, dialog, ipcMain } from 'electron'
-import { countTokens } from 'gpt-tokenizer'
-import { IpcChannel } from '@shared/ipc-channels'
+import { spawn } from "node:child_process";
+import { BrowserWindow, clipboard, dialog, ipcMain } from "electron";
+import { countTokens } from "gpt-tokenizer";
+import { IpcChannel } from "@shared/ipc-channels";
 import type {
+  ApplyFileInput,
   ApplyRequest,
   ApplyResult,
   CleanBackupsResult,
+  DeleteFileRequest,
+  DeleteFileResult,
   DiffRequest,
   DiffResult,
   ParseResult,
@@ -14,23 +17,24 @@ import type {
   ScanResult,
   WriteFileRequest,
   WriteFileResult,
-} from '@shared/types'
+} from "@shared/types";
 import {
   scanDirectory,
   readTextFile,
   writeFileEnsuringDir,
   writeFileWithBackup,
+  deleteFileWithBackup,
   cleanBackupFiles,
-} from './services/fs-service'
-import { buildPrompt } from './services/prompt-builder'
-import { applyFiles, computeDiff } from './services/apply-engine'
-import { parseResponse } from './services/response-parser'
+} from "./services/fs-service";
+import { buildPrompt } from "./services/prompt-builder";
+import { applyFiles, computeDiff } from "./services/apply-engine";
+import { parseResponse } from "./services/response-parser";
 
 function requireString(value: unknown, label: string): string {
-  if (typeof value !== 'string' || value === '') {
-    throw new Error(`Invalid ${label}: expected a non-empty string.`)
+  if (typeof value !== "string" || value === "") {
+    throw new Error(`Invalid ${label}: expected a non-empty string.`);
   }
-  return value
+  return value;
 }
 
 /**
@@ -39,33 +43,33 @@ function requireString(value: unknown, label: string): string {
  * after the app quits.
  */
 function openTerminalAt(cwd: string): void {
-  const platform = process.platform
+  const platform = process.platform;
 
-  let command: string
-  let args: string[]
+  let command: string;
+  let args: string[];
 
-  if (platform === 'win32') {
+  if (platform === "win32") {
     // `start` needs an explicit title argument, else a quoted first argument
     // is interpreted as the window title instead of the program.
-    command = 'cmd'
-    args = ['/c', 'start', '', 'cmd', '/K', `cd /d "${cwd}"`]
-  } else if (platform === 'darwin') {
-    command = 'open'
-    args = ['-a', 'Terminal', cwd]
+    command = "cmd";
+    args = ["/c", "start", "", "cmd", "/K", `cd /d "${cwd}"`];
+  } else if (platform === "darwin") {
+    command = "open";
+    args = ["-a", "Terminal", cwd];
   } else {
     // Linux/BSD: x-terminal-emulator is the Debian alternatives entry point
     // and is present on most desktops that ship a terminal.
-    command = 'x-terminal-emulator'
-    args = [`--working-directory=${cwd}`]
+    command = "x-terminal-emulator";
+    args = [`--working-directory=${cwd}`];
   }
 
-  const child = spawn(command, args, { detached: true, stdio: 'ignore' })
-  child.on('error', (error) => {
+  const child = spawn(command, args, { detached: true, stdio: "ignore" });
+  child.on("error", (error) => {
     // Swallowed intentionally: the child is detached and we have no channel
     // back to the renderer for this fire-and-forget action.
-    console.error(`Failed to open terminal at ${cwd}:`, error)
-  })
-  child.unref()
+    console.error(`Failed to open terminal at ${cwd}:`, error);
+  });
+  child.unref();
 }
 
 /**
@@ -73,104 +77,194 @@ function openTerminalAt(cwd: string): void {
  * renderer is not a trust boundary, so nothing it sends is taken on faith.
  */
 export function registerIpcHandlers(): void {
-  ipcMain.handle(IpcChannel.PickDirectory, async (event): Promise<string | null> => {
-    const window = BrowserWindow.fromWebContents(event.sender)
-    const options = { properties: ['openDirectory' as const] }
-    const result = window
-      ? await dialog.showOpenDialog(window, options)
-      : await dialog.showOpenDialog(options)
-    if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0] ?? null
-  })
+  ipcMain.handle(
+    IpcChannel.PickDirectory,
+    async (event): Promise<string | null> => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      const options = { properties: ["openDirectory" as const] };
+      const result = window
+        ? await dialog.showOpenDialog(window, options)
+        : await dialog.showOpenDialog(options);
+      if (result.canceled || result.filePaths.length === 0) return null;
+      return result.filePaths[0] ?? null;
+    },
+  );
 
-  ipcMain.handle(IpcChannel.ScanDirectory, async (_event, root: unknown): Promise<ScanResult> => {
-    return scanDirectory(requireString(root, 'root'))
-  })
+  ipcMain.handle(
+    IpcChannel.ScanDirectory,
+    async (_event, root: unknown): Promise<ScanResult> => {
+      return scanDirectory(requireString(root, "root"));
+    },
+  );
 
   ipcMain.handle(
     IpcChannel.BuildPrompt,
     async (_event, request: unknown): Promise<PromptBuildResult> => {
-      const typed = request as PromptBuildRequest
-      const root = requireString(typed?.projectRoot, 'projectRoot')
-      if (!Array.isArray(typed?.files)) throw new Error('Invalid files: expected an array.')
-      return buildPrompt(root, typed.files.map((file) => requireString(file, 'file path')))
+      const typed = request as PromptBuildRequest;
+      if (!Array.isArray(typed?.files))
+        throw new Error("Invalid files: expected an array.");
+      const root =
+        typeof typed?.projectRoot === "string" ? typed.projectRoot : "";
+      // An empty root is only legitimate when there is nothing to read from
+      // it. `buildPrompt` never touches the filesystem with an empty file
+      // list, so this lets the renderer produce the base prompt (the output
+      // contract alone) with no project open, while still refusing a
+      // selection that pretends to read from a missing root.
+      if (typed.files.length > 0 && root === "") {
+        throw new Error(
+          "Invalid projectRoot: required when files are selected.",
+        );
+      }
+      return buildPrompt(
+        root,
+        typed.files.map((file) => requireString(file, "file path")),
+      );
     },
-  )
+  );
 
-  ipcMain.handle(IpcChannel.CountTokens, async (_event, text: unknown): Promise<number> => {
-    return countTokens(typeof text === 'string' ? text : '')
-  })
+  ipcMain.handle(
+    IpcChannel.CountTokens,
+    async (_event, text: unknown): Promise<number> => {
+      return countTokens(typeof text === "string" ? text : "");
+    },
+  );
 
   ipcMain.handle(
     IpcChannel.ReadFile,
     async (_event, root: unknown, relativePath: unknown): Promise<string> => {
-      return readTextFile(requireString(root, 'root'), requireString(relativePath, 'path'))
+      return readTextFile(
+        requireString(root, "root"),
+        requireString(relativePath, "path"),
+      );
     },
-  )
+  );
 
-  ipcMain.handle(IpcChannel.WriteFile, async (_event, request: unknown): Promise<WriteFileResult> => {
-    const typed = request as WriteFileRequest
-    const root = requireString(typed?.projectRoot, 'projectRoot')
-    const relativePath = requireString(typed?.path, 'path')
-    const content = typeof typed?.content === 'string' ? typed.content : ''
-    return writeFileWithBackup(root, relativePath, content)
-  })
+  ipcMain.handle(
+    IpcChannel.WriteFile,
+    async (_event, request: unknown): Promise<WriteFileResult> => {
+      const typed = request as WriteFileRequest;
+      const root = requireString(typed?.projectRoot, "projectRoot");
+      const relativePath = requireString(typed?.path, "path");
+      const content = typeof typed?.content === "string" ? typed.content : "";
+      return writeFileWithBackup(root, relativePath, content);
+    },
+  );
 
-  ipcMain.handle(IpcChannel.DiffFile, async (_event, request: unknown): Promise<DiffResult> => {
-    const typed = request as DiffRequest
-    return computeDiff(
-      requireString(typed?.projectRoot, 'projectRoot'),
-      requireString(typed?.path, 'path'),
-      typeof typed?.content === 'string' ? typed.content : '',
-    )
-  })
+  ipcMain.handle(
+    IpcChannel.DeleteFile,
+    async (_event, request: unknown): Promise<DeleteFileResult> => {
+      const typed = request as DeleteFileRequest;
+      const root = requireString(typed?.projectRoot, "projectRoot");
+      const relativePath = requireString(typed?.path, "path");
+      return deleteFileWithBackup(root, relativePath);
+    },
+  );
 
-  ipcMain.handle(IpcChannel.ApplyFiles, async (_event, request: unknown): Promise<ApplyResult[]> => {
-    const typed = request as ApplyRequest
-    const root = requireString(typed?.projectRoot, 'projectRoot')
-    if (!Array.isArray(typed?.files)) throw new Error('Invalid files: expected an array.')
-    return applyFiles({
-      projectRoot: root,
-      files: typed.files.map((file) => ({
-        path: requireString(file?.path, 'path'),
-        content: typeof file?.content === 'string' ? file.content : '',
-      })),
-    })
-  })
+  ipcMain.handle(
+    IpcChannel.DiffFile,
+    async (_event, request: unknown): Promise<DiffResult> => {
+      const typed = request as DiffRequest;
+      return computeDiff(
+        requireString(typed?.projectRoot, "projectRoot"),
+        requireString(typed?.path, "path"),
+        typeof typed?.content === "string" ? typed.content : "",
+      );
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.ApplyFiles,
+    async (_event, request: unknown): Promise<ApplyResult[]> => {
+      const typed = request as ApplyRequest;
+      const root = requireString(typed?.projectRoot, "projectRoot");
+      if (!Array.isArray(typed?.files))
+        throw new Error("Invalid files: expected an array.");
+      return applyFiles({
+        projectRoot: root,
+        files: typed.files.map((file): ApplyFileInput => {
+          const entry: ApplyFileInput = {
+            path: requireString(file?.path, "path"),
+            content: typeof file?.content === "string" ? file.content : "",
+          };
+          if (Array.isArray(file?.patches)) {
+            entry.patches = file.patches
+              .filter(
+                (
+                  patch: unknown,
+                ): patch is { search: string; replace: string } => {
+                  return (
+                    typeof patch === "object" &&
+                    patch !== null &&
+                    typeof (patch as { search?: unknown }).search ===
+                      "string" &&
+                    typeof (patch as { replace?: unknown }).replace === "string"
+                  );
+                },
+              )
+              .map((patch) => ({
+                search: patch.search,
+                replace: patch.replace,
+              }));
+          }
+          if (file?.delete === true) {
+            entry.delete = true;
+          }
+          return entry;
+        }),
+      });
+    },
+  );
 
   ipcMain.handle(
     IpcChannel.SavePrompt,
-    async (event, content: unknown, suggestedName: unknown): Promise<string | null> => {
-      const window = BrowserWindow.fromWebContents(event.sender)
+    async (
+      event,
+      content: unknown,
+      suggestedName: unknown,
+    ): Promise<string | null> => {
+      const window = BrowserWindow.fromWebContents(event.sender);
       const options = {
-        defaultPath: typeof suggestedName === 'string' ? suggestedName : 'prompt.md',
-        filters: [{ name: 'Markdown', extensions: ['md', 'txt'] }],
-      }
+        defaultPath:
+          typeof suggestedName === "string" ? suggestedName : "prompt.md",
+        filters: [{ name: "Markdown", extensions: ["md", "txt"] }],
+      };
       const result = window
         ? await dialog.showSaveDialog(window, options)
-        : await dialog.showSaveDialog(options)
-      if (result.canceled || !result.filePath) return null
-      await writeFileEnsuringDir(result.filePath, requireString(content, 'content'))
-      return result.filePath
+        : await dialog.showSaveDialog(options);
+      if (result.canceled || !result.filePath) return null;
+      await writeFileEnsuringDir(
+        result.filePath,
+        requireString(content, "content"),
+      );
+      return result.filePath;
     },
-  )
+  );
 
   ipcMain.handle(
     IpcChannel.CleanBackups,
     async (_event, root: unknown): Promise<CleanBackupsResult> => {
-      return cleanBackupFiles(requireString(root, 'root'))
+      return cleanBackupFiles(requireString(root, "root"));
     },
-  )
+  );
 
-  ipcMain.handle(IpcChannel.CopyText, async (_event, text: unknown): Promise<void> => {
-    clipboard.writeText(requireString(text, 'text'))
-  })
+  ipcMain.handle(
+    IpcChannel.CopyText,
+    async (_event, text: unknown): Promise<void> => {
+      clipboard.writeText(requireString(text, "text"));
+    },
+  );
 
-  ipcMain.handle(IpcChannel.ParseResponse, async (_event, raw: unknown): Promise<ParseResult> => {
-    return parseResponse(typeof raw === 'string' ? raw : '')
-  })
+  ipcMain.handle(
+    IpcChannel.ParseResponse,
+    async (_event, raw: unknown): Promise<ParseResult> => {
+      return parseResponse(typeof raw === "string" ? raw : "");
+    },
+  );
 
-  ipcMain.handle(IpcChannel.OpenTerminal, async (_event, root: unknown): Promise<void> => {
-    openTerminalAt(requireString(root, 'root'))
-  })
+  ipcMain.handle(
+    IpcChannel.OpenTerminal,
+    async (_event, root: unknown): Promise<void> => {
+      openTerminalAt(requireString(root, "root"));
+    },
+  );
 }

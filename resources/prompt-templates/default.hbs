@@ -22,14 +22,34 @@ Reply using exactly the three sections below, in this order, and nothing else.
 
 ### Section 1 — Files
 
-One entry per file that needs to change. Each entry is:
+One entry per file that needs to change. **New** files and **existing** files use different shapes.
+
+#### New file — emit the whole file
 
 - A line reading `File: <path>` holding the project-relative path.
 - A fenced code block containing that file's **complete** contents.
 - Use the same language tag as shown in the context above.
 
+#### Existing file — emit SEARCH/REPLACE patches
+
+- A line reading `File: <path>` holding the project-relative path.
+- One or more SEARCH/REPLACE pairs, in the form:
+
+  ```
+  <<<<<<< SEARCH
+  (exact substring copied from the file as shown above)
+  =======
+  (the text that should replace it)
+  >>>>>>> REPLACE
+  ```
+
 Rules:
-- Never use line numbers or partial snippets. Always emit the whole file.
+- A file that does not yet exist **must** be emitted as a full fenced block, never a patch.
+- An existing file **should** be emitted as one or more SEARCH/REPLACE pairs whenever the change is small relative to the file.
+- The SEARCH block must be an **exact substring** of the file as shown in the context above, including all whitespace, indentation, and line endings. Do not re-indent, re-wrap, reorder, or "clean up" the quoted region. Copy it verbatim.
+- The SEARCH block must be unambiguous — quote enough surrounding context that the substring appears exactly once in the file.
+- If a change touches more than roughly half of an existing file, emit the whole file as a full fenced block instead of a large patch.
+- You may emit multiple SEARCH/REPLACE pairs under a single `File:` header; they are applied in order.
 - Do not add prose between file entries.
 - If a file is unchanged, do not include it.
 
@@ -56,3 +76,4 @@ If there are no debug commands, write `## Debug` followed by the single word `No
 - No conversational text before `File:` entries, between them, or after `## Debug`.
 - The `## Explanation` and `## Debug` headings are **mandatory** — always emit both, even when their content is `None`.
 - Never put a `File:` line inside the Explanation or Debug sections.
+

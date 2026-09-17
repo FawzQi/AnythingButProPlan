@@ -83,10 +83,25 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
     (file, index) => includes[parsedFileKey(file, index)] === true,
   ).length;
 
+  const deleteCount = includable.filter(
+    (file, index) =>
+      file.delete === true && includes[parsedFileKey(file, index)] === true,
+  ).length;
+  const writeCount = selectedCount - deleteCount;
+
   const confirmApply = (): void => {
+    const lines: string[] = [];
+    if (writeCount > 0) {
+      lines.push(`${writeCount} file(s) will be written to disk.`);
+    }
+    if (deleteCount > 0) {
+      lines.push(
+        `${deleteCount} file(s) will be deleted — the contents are preserved as .bak siblings.`,
+      );
+    }
     const message =
-      `${selectedCount} file(s) will be written to disk.\n\n` +
-      "Existing files are backed up as .bak first. This cannot be undone from inside LARPGent.";
+      lines.join("\n") +
+      "\n\nExisting files are backed up as .bak first. This cannot be undone from inside LARPGent.";
     if (window.confirm(message)) void applySelected();
   };
 
@@ -147,15 +162,29 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
                     <th className="w-8 py-1 font-medium">Use</th>
                     <th className="py-1 font-medium">Path</th>
                     <th className="w-20 py-1 font-medium">Action</th>
-                    <th className="w-20 py-1 font-medium">Language</th>
+                    <th className="w-24 py-1 font-medium">Kind</th>
                     <th className="w-28 py-1 font-medium">Path source</th>
-                    <th className="w-14 py-1 font-medium">Diff</th>
+                    <th className="w-14 py-1 font-medium">View</th>
                   </tr>
                 </thead>
                 <tbody>
                   {parseResult.files.map((file, index) => {
                     const key = parsedFileKey(file, index);
                     const known = file.path !== null;
+                    const patchCount = file.patches?.length ?? 0;
+                    const isPatch = patchCount > 0;
+                    const isDelete = file.delete === true;
+                    const action = !known
+                      ? "—"
+                      : existing[file.path] === undefined
+                        ? "…"
+                        : isDelete
+                          ? existing[file.path]
+                            ? "delete"
+                            : "not found"
+                          : existing[file.path]
+                            ? "overwrite"
+                            : "create";
                     return (
                       <tr
                         key={key}
@@ -190,17 +219,27 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
                             />
                           )}
                         </td>
-                        <td className="py-1.5 text-slate-400">
-                          {file.path === null
-                            ? "—"
-                            : existing[file.path] === undefined
-                              ? "…"
-                              : existing[file.path]
-                                ? "overwrite"
-                                : "create"}
-                        </td>
-                        <td className="py-1.5 text-slate-400">
-                          {file.language ?? "—"}
+                        <td className="py-1.5 text-slate-400">{action}</td>
+                        <td className="py-1.5">
+                          {isDelete ? (
+                            <span
+                              title="Delete directive — the file is renamed to a .bak sibling"
+                              className="rounded bg-red-900/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-red-300"
+                            >
+                              delete
+                            </span>
+                          ) : isPatch ? (
+                            <span
+                              title={`${patchCount} SEARCH/REPLACE pair(s) — applied against the file on disk`}
+                              className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300"
+                            >
+                              patch×{patchCount}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">
+                              {file.language ?? "—"}
+                            </span>
+                          )}
                         </td>
                         <td className="py-1.5 text-slate-400">
                           {SOURCE_LABELS[file.pathSource] ?? file.pathSource}
@@ -208,7 +247,7 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
                         <td className="py-1.5">
                           <Button
                             variant="ghost"
-                            disabled={!known}
+                            disabled={!known || isDelete}
                             onClick={() => {
                               if (file.path)
                                 setDiffTarget({
@@ -216,8 +255,15 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
                                   content: file.content,
                                 });
                             }}
+                            title={
+                              isDelete
+                                ? "No diff to show for a delete"
+                                : isPatch
+                                  ? "Show the raw SEARCH/REPLACE text the AI proposed"
+                                  : "Diff against the file on disk"
+                            }
                           >
-                            View
+                            {isDelete ? "—" : isPatch ? "Patch" : "Diff"}
                           </Button>
                         </td>
                       </tr>
