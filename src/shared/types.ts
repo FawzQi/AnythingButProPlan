@@ -34,7 +34,6 @@ export interface ScanResult {
 
 export type PathSource =
   | 'file-header'
-  | 'xml'
   | 'first-line-comment'
   | 'preceding-text'
   | 'language-hint'

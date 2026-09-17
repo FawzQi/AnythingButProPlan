@@ -1,4 +1,3 @@
-import type { PathSource } from '@shared/types'
 import type { CodeBlock, PathHint } from './types'
 
 /** Language info-string -> plausible extension, for the language-hint rule only. */
@@ -146,26 +145,17 @@ function pathFromText(text: string): string | null {
   return null
 }
 
-export interface ResolveOptions {
-  /** Path from the XML `path` attribute, when the block came from an envelope. */
-  explicitPath?: string | null
-  source?: PathSource
-}
-
 /**
  * Resolve a code block to a target path. Precedence is exactly the order
  * documented in CLAUDE.md; the first rule that produces a usable path wins.
  * Never throws — an unresolved block comes back `ambiguous: true` so the UI can
  * ask the user instead of dropping the AI's code on the floor.
+ *
+ * The one-time `explicitPath` option (used by the removed XML envelope
+ * strategy) is gone with its caller; the fence-header rule below is now the
+ * highest-precedence producer of a path.
  */
-export function resolvePath(block: CodeBlock, options: ResolveOptions = {}): PathHint {
-  if (options.explicitPath != null) {
-    const normalized = normalizePath(options.explicitPath)
-    if (normalized) {
-      return { path: normalized, source: options.source ?? 'xml', ambiguous: false }
-    }
-  }
-
+export function resolvePath(block: CodeBlock): PathHint {
   // The output contract: `File: <path>` introducing the fence.
   const fromHeader = pathFromFileHeader(block.precedingText)
   if (fromHeader) {

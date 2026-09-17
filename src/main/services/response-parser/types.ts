@@ -23,9 +23,3 @@ export interface PathHint {
   source: PathSource
   ambiguous: boolean
 }
-
-/** A resolved (or unresolvable) code block, ready to become a ParsedFile. */
-export interface ResolvedBlock {
-  block: CodeBlock
-  hint: PathHint
-}

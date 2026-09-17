@@ -23,31 +23,6 @@ export function Button({
   )
 }
 
-export function Checkbox({
-  checked,
-  onChange,
-  label,
-  disabled,
-}: {
-  checked: boolean
-  onChange: (checked: boolean) => void
-  label?: string
-  disabled?: boolean
-}): ReactNode {
-  return (
-    <label className="flex items-center gap-2 text-sm text-slate-200">
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.checked)}
-        className="size-3.5 accent-sky-500"
-      />
-      {label ? <span className="truncate">{label}</span> : null}
-    </label>
-  )
-}
-
 export function Panel({
   title,
   actions,

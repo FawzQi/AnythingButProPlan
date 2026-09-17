@@ -65,7 +65,3 @@ export function countFiles(node: FileNode): { selected: number; total: number } 
   walk(node)
   return { selected, total }
 }
-
-export function setAllSelected(node: FileNode, selected: boolean): FileNode {
-  return setSubtreeSelected(node, selected)
-}

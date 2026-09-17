@@ -8,10 +8,10 @@ import { DiffViewer } from "../DiffViewer";
 
 const SOURCE_LABELS: Record<string, string> = {
   "file-header": "File: header",
-  xml: "XML attribute",
   "first-line-comment": "First-line comment",
   "preceding-text": "Preceding text",
   "language-hint": "Guessed",
+  "delete-header": "Delete: directive",
   user: "You",
 };
 
