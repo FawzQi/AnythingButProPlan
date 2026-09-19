@@ -27,6 +27,10 @@ export const IpcChannel = {
   SavePrompt: 'fs:save-prompt',
   CopyText: 'clipboard:write',
   OpenTerminal: 'shell:open-terminal',
+  AiSettingsGet: 'ai:settings-get',
+  AiSettingsSave: 'ai:settings-save',
+  AiListModels: 'ai:list-models',
+  AiSuggestFiles: 'ai:suggest-files',
 } as const
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel]

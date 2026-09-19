@@ -3,6 +3,10 @@ import { BrowserWindow, clipboard, dialog, ipcMain } from "electron";
 import { countTokens } from "gpt-tokenizer";
 import { IpcChannel } from "@shared/ipc-channels";
 import type {
+  AiSettings,
+  AiSettingsSaveRequest,
+  AiSuggestion,
+  AiSuggestRequest,
   ApplyFileInput,
   ApplyRequest,
   ApplyResult,
@@ -49,6 +53,9 @@ import {
 import { buildPrompt } from "./services/prompt-builder";
 import { applyFiles, computeDiff } from "./services/apply-engine";
 import { parseResponse } from "./services/response-parser";
+import { getApiKey, getSettings, saveSettings } from "./services/settings";
+import { suggestFiles } from "./services/file-selector";
+import { discoverModels, listProviders } from "./services/ai-providers";
 
 function requireString(value: unknown, label: string): string {
   if (typeof value !== "string" || value === "") {
@@ -158,6 +165,80 @@ export function registerIpcHandlers(): void {
     IpcChannel.ScanDirectory,
     async (_event, root: unknown): Promise<ScanResult> => {
       return scanDirectory(requireString(root, "root"));
+    },
+  );
+
+  /* ---------------------------------------------------------------------- *
+   * AI file selection
+   * ---------------------------------------------------------------------- */
+
+  ipcMain.handle(
+    IpcChannel.AiSettingsGet,
+    async (): Promise<{ settings: AiSettings; providers: ReturnType<typeof listProviders> }> => {
+      return { settings: await getSettings(), providers: listProviders() };
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.AiSettingsSave,
+    async (_event, request: unknown): Promise<AiSettings> => {
+      const typed = request as AiSettingsSaveRequest;
+      // `undefined` means "leave unchanged"; `null` means "clear the
+      // selection". `saveSettings` distinguishes the two internally, so
+      // passing each field straight through is the correct behaviour.
+      return saveSettings({
+        provider: typed?.provider,
+        model: typed?.model,
+        apiKey: typed?.apiKey,
+      });
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.AiListModels,
+    async (_event, provider: unknown): Promise<string[]> => {
+      // Validate the provider id here rather than in the caller so an
+      // unknown value never reaches the provider registry.
+      const id = provider;
+      if (
+        id !== "deepseek" &&
+        id !== "groq" &&
+        id !== "openrouter" &&
+        id !== "google"
+      ) {
+        throw new Error(`Unknown AI provider: ${String(id)}`);
+      }
+      const apiKey = await getApiKey(id);
+      if (!apiKey) {
+        throw new Error(
+          "No API key saved for this provider. Paste a key and save it first.",
+        );
+      }
+      return discoverModels(id, apiKey);
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.AiSuggestFiles,
+    async (_event, request: unknown): Promise<AiSuggestion> => {
+      const typed = request as AiSuggestRequest;
+      const settings = await getSettings();
+      if (!settings.provider) {
+        throw new Error(
+          "No AI provider selected. Choose one in the Settings tab.",
+        );
+      }
+      if (!Array.isArray(typed?.filePaths)) {
+        throw new Error("Invalid filePaths: expected an array.");
+      }
+      return suggestFiles(
+        {
+          projectRoot: requireString(typed?.projectRoot, "projectRoot"),
+          filePaths: typed.filePaths.map((p) => requireString(p, "file path")),
+          instruction: requireString(typed?.instruction, "instruction"),
+        },
+        settings.provider,
+      );
     },
   );
 

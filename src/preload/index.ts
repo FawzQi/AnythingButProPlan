@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IpcChannel } from "@shared/ipc-channels";
 import type {
+  AiProviderId,
+  AiSettings,
+  AiSettingsSaveRequest,
+  AiSuggestion,
+  AiSuggestRequest,
+  AiProviderInfo,
   ApplyRequest,
   ApplyResult,
   ConfirmDialogRequest,
@@ -81,6 +87,14 @@ const api = {
     ipcRenderer.invoke(IpcChannel.CopyText, text),
   openTerminal: (root: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.OpenTerminal, root),
+  aiGetSettings: (): Promise<{ settings: AiSettings; providers: AiProviderInfo[] }> =>
+    ipcRenderer.invoke(IpcChannel.AiSettingsGet),
+  aiSaveSettings: (request: AiSettingsSaveRequest): Promise<AiSettings> =>
+    ipcRenderer.invoke(IpcChannel.AiSettingsSave, request),
+  aiListModels: (provider: AiProviderId): Promise<string[]> =>
+    ipcRenderer.invoke(IpcChannel.AiListModels, provider),
+  aiSuggestFiles: (request: AiSuggestRequest): Promise<AiSuggestion> =>
+    ipcRenderer.invoke(IpcChannel.AiSuggestFiles, request),
 };
 
 export type LARPGentApi = typeof api;

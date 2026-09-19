@@ -6,6 +6,7 @@ import { countFiles } from '../../lib/tree'
 import { insertCustomPrompt } from '../../lib/prompt'
 import { Banner, Button, Panel } from '../../lib/ui'
 import { SourceControl } from '../SourceControl'
+import { AiSettingsPanel } from './AiSettingsPanel'
 
 const TOKEN_WARNING_THRESHOLD = 100_000
 
@@ -41,6 +42,11 @@ function PromptTab(): ReactElement {
   const sensitiveFiles = useAppStore((state) => state.sensitiveFiles)
   const customPrompt = useAppStore((state) => state.customPrompt)
   const setCustomPrompt = useAppStore((state) => state.setCustomPrompt)
+  const aiSettings = useAppStore((state) => state.aiSettings)
+  const aiSuggesting = useAppStore((state) => state.aiSuggesting)
+  const aiLastSuggestion = useAppStore((state) => state.aiLastSuggestion)
+  const suggestFiles = useAppStore((state) => state.suggestFiles)
+  const setEditorTab = useAppStore((state) => state.setEditorTab)
 
   // What the user actually sees and copies: the built base prompt with the
   // current additional instructions appended. Recomputing here (rather than at
@@ -127,21 +133,63 @@ function PromptTab(): ReactElement {
       </div>
 
       <div className="shrink-0 border-t border-[#2c3038] p-2">
-        <label
-          htmlFor="custom-prompt"
-          className="mb-1 block text-xs font-medium text-slate-400"
-        >
-          Additional instructions
-        </label>
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <label
+            htmlFor="custom-prompt"
+            className="block text-xs font-medium text-slate-400"
+          >
+            Additional instructions
+          </label>
+          <Button
+            variant="ghost"
+            className="px-2 py-0.5 text-xs"
+            onClick={() => void suggestFiles()}
+            disabled={aiSuggesting || customPrompt.trim() === ''}
+            title={
+              aiSettings?.provider
+                ? `Ask ${aiSettings.provider} to pick the relevant files`
+                : 'Configure an AI provider in the Settings tab first'
+            }
+          >
+            {aiSuggesting ? 'Thinking…' : '✨ Suggest files'}
+          </Button>
+        </div>
         <textarea
           id="custom-prompt"
           value={customPrompt}
           onChange={(event) => setCustomPrompt(event.target.value)}
-          placeholder="Extra context or requirements to include with the selected files (e.g. target framework, coding conventions, constraints). Appended to the end of the full prompt when you copy or save."
+          placeholder="Describe the change you want (e.g. 'add CSV export to the reports page'). Use ✨ Suggest files to have an AI pick the relevant files. The text is also appended to the end of the prompt when you copy or save."
           spellCheck={false}
           rows={3}
           className="w-full resize-y rounded border border-[#2c3038] bg-[#12141a] p-2 text-xs text-slate-200 outline-none focus:border-sky-600"
         />
+        {aiSettings && !aiSettings.provider ? (
+          <p className="mt-1 text-[11px] text-slate-500">
+            No AI provider configured.{' '}
+            <button
+              type="button"
+              className="text-sky-400 hover:text-sky-300"
+              onClick={() => setEditorTab('settings')}
+            >
+              Open Settings
+            </button>
+          </p>
+        ) : null}
+        {aiLastSuggestion ? (
+          <div className="mt-2">
+            <Banner
+              tone={aiLastSuggestion.hallucinated.length > 0 ? 'warn' : 'success'}
+            >
+              {aiLastSuggestion.paths.length} file(s) selected via{' '}
+              {aiLastSuggestion.provider}/{aiLastSuggestion.model} —{' '}
+              {aiLastSuggestion.mapTokens.toLocaleString()} map tokens,{' '}
+              {aiLastSuggestion.durationMs.toLocaleString()} ms
+              {aiLastSuggestion.hallucinated.length > 0
+                ? ` — dropped ${aiLastSuggestion.hallucinated.length} nonexistent path(s)`
+                : ''}
+            </Banner>
+          </div>
+        ) : null}
       </div>
 
       <footer className="flex shrink-0 items-center gap-4 border-t border-[#2c3038] px-3 py-1.5 text-xs text-slate-500">
@@ -328,12 +376,20 @@ export function PromptDashboard(): ReactElement {
               </span>
             ) : null}
           </TabButton>
+          <TabButton
+            active={editorTab === 'settings'}
+            onClick={() => setEditorTab('settings')}
+          >
+            Settings
+          </TabButton>
         </div>
 
         {editorTab === 'prompt' ? (
           <PromptTab />
         ) : editorTab === 'editor' ? (
           <EditorTab />
+        ) : editorTab === 'settings' ? (
+          <AiSettingsPanel />
         ) : (
           <SourceControl />
         )}

@@ -306,3 +306,67 @@ export interface GitDiffContent {
    */
   exists: boolean
 }
+
+/* ------------------------------------------------------------------------ *
+ * AI file selection
+ * ------------------------------------------------------------------------ */
+
+export type AiProviderId = 'deepseek' | 'groq' | 'openrouter' | 'google'
+
+export interface AiProviderInfo {
+  id: AiProviderId
+  /** Human-readable name for the settings UI. */
+  label: string
+  /** Where the user gets an API key. Shown as a link. */
+  keyUrl: string
+  /** Models the provider exposes. First entry is the default. */
+  models: string[]
+}
+
+/**
+ * Persisted AI configuration. The API keys themselves never cross the
+ * contextBridge — the renderer only learns whether a key is present, so a
+ * compromised renderer cannot exfiltrate them. Every call that needs a key
+ * goes through the main process.
+ */
+export interface AiSettings {
+  provider: AiProviderId | null
+  /** Chosen model per provider. Missing entry means "use the provider default". */
+  modelByProvider: Partial<Record<AiProviderId, string>>
+  /** True when a key has been saved for this provider. */
+  hasApiKey: Partial<Record<AiProviderId, boolean>>
+}
+
+export interface AiSettingsSaveRequest {
+  provider?: AiProviderId | null
+  /** Set or replace the model for one provider. */
+  model?: { provider: AiProviderId; model: string }
+  /** Set or replace the API key for one provider. Empty string clears it. */
+  apiKey?: { provider: AiProviderId; key: string }
+}
+
+export interface AiSuggestRequest {
+  projectRoot: string
+  /** Every file path in the scanned tree — the AI may only pick from these. */
+  filePaths: string[]
+  /** The user's "Additional instructions" text — the feature request. */
+  instruction: string
+}
+
+export interface AiSuggestion {
+  /** Validated paths the AI picked, in the order it returned them. */
+  paths: string[]
+  provider: AiProviderId
+  model: string
+  /** Approximate tokens in the skeleton map that was sent. */
+  mapTokens: number
+  /** Approximate tokens in the AI response. */
+  outputTokens: number
+  /** Wall-clock duration of the API call, milliseconds. */
+  durationMs: number
+  /**
+   * Paths the AI returned that do not exist in the scanned tree. Surfaced so
+   * the UI can warn the user that the model hallucinated; never applied.
+   */
+  hallucinated: string[]
+}

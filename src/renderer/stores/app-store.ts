@@ -1,5 +1,10 @@
 import { create } from "zustand";
 import type {
+  AiProviderId,
+  AiProviderInfo,
+  AiSettings,
+  AiSettingsSaveRequest,
+  AiSuggestion,
   ApplyResult,
   FileNode,
   GitStatus,
@@ -18,7 +23,7 @@ export function parsedFileKey(file: ParsedFile, index: number): string {
   return file.path ?? `#${index}`;
 }
 
-export type EditorTab = "prompt" | "editor" | "source";
+export type EditorTab = "prompt" | "editor" | "source" | "settings";
 
 interface AppState {
   projectRoot: string | null;
@@ -76,8 +81,35 @@ interface AppState {
   /** Draft commit message bound to the textarea in the Source Control tab. */
   gitCommitMessage: string;
 
+  /**
+   * AI provider configuration. `null` before the settings load completes.
+   * `providers` is the catalogue the Settings tab renders; `settings` is the
+   * user's current selection, with `hasApiKey` reflecting whether a key was
+   * stored per provider (the key itself never reaches the renderer).
+   */
+  aiProviders: AiProviderInfo[];
+  aiSettings: AiSettings | null;
+  aiSettingsLoading: boolean;
+  /**
+   * Live model catalogue per provider, keyed by provider id. Populated on
+   * demand from the provider's own list endpoint — a hardcoded array is
+   * never the source of truth, because vendors retire model names without
+   * notice and the stale name produces a 404 at request time.
+   */
+  aiModelsByProvider: Partial<Record<AiProviderId, string[]>>;
+  aiModelsLoading: boolean;
+  /** True while a suggest-files request is in flight. */
+  aiSuggesting: boolean;
+  /** Result of the most recent suggest-files call, or null. */
+  aiLastSuggestion: AiSuggestion | null;
+
   notice: string | null;
   error: string | null;
+
+  loadAiSettings: () => Promise<void>;
+  saveAiSettings: (request: AiSettingsSaveRequest) => Promise<void>;
+  loadAiModels: (provider: AiProviderId) => Promise<void>;
+  suggestFiles: () => Promise<void>;
 
   openProject: () => Promise<void>;
   refreshProject: () => Promise<void>;
@@ -160,8 +192,119 @@ export const useAppStore = create<AppState>((set, get) => ({
   gitBusy: false,
   gitCommitMessage: "",
 
+  aiProviders: [],
+  aiSettings: null,
+  aiSettingsLoading: false,
+  aiModelsByProvider: {},
+  aiModelsLoading: false,
+  aiSuggesting: false,
+  aiLastSuggestion: null,
+
   notice: null,
   error: null,
+
+  loadAiSettings: async () => {
+    set({ aiSettingsLoading: true });
+    try {
+      const result = await window.LARPGent.aiGetSettings();
+      set({
+        aiProviders: result.providers,
+        aiSettings: result.settings,
+        aiSettingsLoading: false,
+      });
+    } catch (error) {
+      set({ aiSettingsLoading: false, error: message(error) });
+    }
+  },
+
+  saveAiSettings: async (request) => {
+    try {
+      const settings = await window.LARPGent.aiSaveSettings(request);
+      set({ aiSettings: settings, notice: "AI settings saved." });
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+
+  loadAiModels: async (provider) => {
+    set({ aiModelsLoading: true });
+    try {
+      const models = await window.LARPGent.aiListModels(provider);
+      set((state) => ({
+        aiModelsByProvider: {
+          ...state.aiModelsByProvider,
+          [provider]: models,
+        },
+        aiModelsLoading: false,
+      }));
+    } catch (error) {
+      // A failed list is not a fatal error — the settings panel falls back
+      // to the provider's seed list, and the error banner is reserved for
+      // actions that actually blocked the user.
+      set({ aiModelsLoading: false });
+      console.warn("Failed to list models:", message(error));
+    }
+  },
+
+  suggestFiles: async () => {
+    const { projectRoot, tree, customPrompt } = get();
+    if (!projectRoot || !tree) {
+      set({ error: "Open a project before asking the AI to suggest files." });
+      return;
+    }
+    if (customPrompt.trim() === "") {
+      set({
+        error:
+          "Type a description of the change in Additional instructions first.",
+      });
+      return;
+    }
+    const filePaths: string[] = [];
+    const walk = (node: FileNode): void => {
+      if (node.type === "file") filePaths.push(node.path);
+      for (const child of node.children ?? []) walk(child);
+    };
+    walk(tree);
+    if (filePaths.length === 0) {
+      set({ error: "The project has no promptable files." });
+      return;
+    }
+    try {
+      set({ aiSuggesting: true, error: null, aiLastSuggestion: null });
+      const suggestion = await window.LARPGent.aiSuggestFiles({
+        projectRoot,
+        filePaths,
+        instruction: customPrompt,
+      });
+      set({ aiSuggesting: false, aiLastSuggestion: suggestion });
+      // Replace the current selection with the AI's pick. Any file not in
+      // the suggestion is deselected — the whole point of the feature is to
+      // narrow a sprawling selection down to what matters, so additive
+      // selection would defeat it.
+      const chosen = new Set(suggestion.paths);
+      const apply = (node: FileNode): FileNode => {
+        if (node.type === "file") {
+          return { ...node, selected: chosen.has(node.path) };
+        }
+        // Preserve `children: undefined` for childless directories rather
+        // than normalising it to an empty array — the rest of the app
+        // distinguishes the two, and a directory that becomes `children: []`
+        // would render one frame differently on the next flatten.
+        return node.children
+          ? { ...node, children: node.children.map(apply) }
+          : { ...node };
+      };
+      set({ tree: apply(tree) });
+      set({
+        notice:
+          suggestion.paths.length === 0
+            ? "The AI did not suggest any files."
+            : `Selected ${suggestion.paths.length} file(s) via ${suggestion.provider}.`,
+      });
+    } catch (error) {
+      set({ aiSuggesting: false, error: message(error) });
+    }
+  },
 
   openProject: async () => {
     try {
