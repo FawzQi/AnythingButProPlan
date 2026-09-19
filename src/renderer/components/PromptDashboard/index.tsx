@@ -45,6 +45,7 @@ function PromptTab(): ReactElement {
   const aiSettings = useAppStore((state) => state.aiSettings)
   const aiSuggesting = useAppStore((state) => state.aiSuggesting)
   const aiLastSuggestion = useAppStore((state) => state.aiLastSuggestion)
+  const mapTokenCount = useAppStore((state) => state.mapTokenCount)
   const suggestFiles = useAppStore((state) => state.suggestFiles)
   const setEditorTab = useAppStore((state) => state.setEditorTab)
 
@@ -194,7 +195,10 @@ function PromptTab(): ReactElement {
 
       <footer className="flex shrink-0 items-center gap-4 border-t border-[#2c3038] px-3 py-1.5 text-xs text-slate-500">
         <span>{promptFileCount} file(s)</span>
-        <span>~{displayTokens.toLocaleString()} tokens</span>
+        <span>~{displayTokens.toLocaleString()} prompt tokens</span>
+        {mapTokenCount !== null ? (
+          <span>~{mapTokenCount.toLocaleString()} map tokens</span>
+        ) : null}
       </footer>
     </div>
   )

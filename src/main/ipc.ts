@@ -223,7 +223,8 @@ export function registerIpcHandlers(): void {
     async (_event, request: unknown): Promise<AiSuggestion> => {
       const typed = request as AiSuggestRequest;
       const settings = await getSettings();
-      if (!settings.provider) {
+      // Skip the provider check if we're only doing a dry-run token count
+      if (!typed?.dryRun && !settings.provider) {
         throw new Error(
           "No AI provider selected. Choose one in the Settings tab.",
         );
@@ -235,9 +236,10 @@ export function registerIpcHandlers(): void {
         {
           projectRoot: requireString(typed?.projectRoot, "projectRoot"),
           filePaths: typed.filePaths.map((p) => requireString(p, "file path")),
-          instruction: requireString(typed?.instruction, "instruction"),
+          instruction: typeof typed?.instruction === "string" ? typed.instruction : "",
+          dryRun: typed?.dryRun,
         },
-        settings.provider,
+        settings.provider ?? "deepseek", // fallback for dryRun
       );
     },
   );

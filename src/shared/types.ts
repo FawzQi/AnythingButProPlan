@@ -351,6 +351,8 @@ export interface AiSuggestRequest {
   filePaths: string[]
   /** The user's "Additional instructions" text — the feature request. */
   instruction: string
+  /** When true, bypasses the LLM and only computes the codebase map tokens. */
+  dryRun?: boolean
 }
 
 export interface AiSuggestion {

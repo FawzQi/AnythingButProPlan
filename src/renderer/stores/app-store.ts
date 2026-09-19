@@ -102,6 +102,8 @@ interface AppState {
   aiSuggesting: boolean;
   /** Result of the most recent suggest-files call, or null. */
   aiLastSuggestion: AiSuggestion | null;
+  /** Token count of the generated codebase map/skeleton used for suggest files. */
+  mapTokenCount: number | null;
 
   notice: string | null;
   error: string | null;
@@ -110,6 +112,7 @@ interface AppState {
   saveAiSettings: (request: AiSettingsSaveRequest) => Promise<void>;
   loadAiModels: (provider: AiProviderId) => Promise<void>;
   suggestFiles: () => Promise<void>;
+  calculateMapTokens: () => Promise<void>;
 
   openProject: () => Promise<void>;
   refreshProject: () => Promise<void>;
@@ -199,6 +202,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   aiModelsLoading: false,
   aiSuggesting: false,
   aiLastSuggestion: null,
+  mapTokenCount: null,
 
   notice: null,
   error: null,
@@ -246,6 +250,32 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  calculateMapTokens: async () => {
+    const { projectRoot, tree } = get();
+    if (!projectRoot || !tree) return;
+    const filePaths: string[] = [];
+    const walk = (node: FileNode): void => {
+      if (node.type === "file") filePaths.push(node.path);
+      for (const child of node.children ?? []) walk(child);
+    };
+    walk(tree);
+    if (filePaths.length === 0) {
+      set({ mapTokenCount: 0 });
+      return;
+    }
+    try {
+      const suggestion = await window.LARPGent.aiSuggestFiles({
+        projectRoot,
+        filePaths,
+        instruction: "",
+        dryRun: true,
+      });
+      set({ mapTokenCount: suggestion.mapTokens });
+    } catch (error) {
+      console.warn("Failed to calculate map tokens:", message(error));
+    }
+  },
+
   suggestFiles: async () => {
     const { projectRoot, tree, customPrompt } = get();
     if (!projectRoot || !tree) {
@@ -276,7 +306,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         filePaths,
         instruction: customPrompt,
       });
-      set({ aiSuggesting: false, aiLastSuggestion: suggestion });
+      set({
+        aiSuggesting: false,
+        aiLastSuggestion: suggestion,
+        mapTokenCount: suggestion.mapTokens,
+      });
       // Replace the current selection with the AI's pick. Any file not in
       // the suggestion is deselected — the whole point of the feature is to
       // narrow a sprawling selection down to what matters, so additive
@@ -332,8 +366,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         // loading state rather than showing the old repo's branch.
         gitStatus: undefined,
         gitCommitMessage: "",
+        mapTokenCount: null,
       });
       await get().refreshGitStatus();
+      await get().calculateMapTokens();
     } catch (error) {
       set({ scanning: false, error: message(error) });
     }
@@ -360,6 +396,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // A scan can pick up files changed outside the app, so refresh Git
       // status alongside it.
       await get().refreshGitStatus();
+      await get().calculateMapTokens();
     } catch (error) {
       set({ scanning: false, error: message(error) });
     }

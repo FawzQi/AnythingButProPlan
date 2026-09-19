@@ -68,6 +68,21 @@ export async function suggestFiles(
   request: AiSuggestRequest,
   providerId: AiProviderId,
 ): Promise<AiSuggestion> {
+  const map = await buildCodebaseMap(request.projectRoot, request.filePaths)
+  const mapTokens = countTokens(map.text)
+
+  if (request.dryRun) {
+    return {
+      paths: [],
+      provider: providerId,
+      model: '',
+      mapTokens,
+      outputTokens: 0,
+      durationMs: 0,
+      hallucinated: [],
+    }
+  }
+
   const provider = getProvider(providerId)
   const apiKey = await getApiKey(providerId)
   if (!apiKey) {
@@ -76,9 +91,6 @@ export async function suggestFiles(
     )
   }
   const model = await resolveModel(providerId, provider.models[0] ?? '')
-
-  const map = await buildCodebaseMap(request.projectRoot, request.filePaths)
-  const mapTokens = countTokens(map.text)
 
   const user = [
     'Project skeleton:',
