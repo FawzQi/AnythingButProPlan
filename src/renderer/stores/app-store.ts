@@ -277,7 +277,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   suggestFiles: async () => {
-    const { projectRoot, tree, customPrompt } = get();
+    const { projectRoot, tree, customPrompt, aiSettings, mapTokenCount } =
+      get();
     if (!projectRoot || !tree) {
       set({ error: "Open a project before asking the AI to suggest files." });
       return;
@@ -288,6 +289,30 @@ export const useAppStore = create<AppState>((set, get) => ({
           "Type a description of the change in Additional instructions first.",
       });
       return;
+    }
+    // Warn before committing to a request the provider will very likely
+    // reject. The current method sends the whole skeleton in one call, so a
+    // huge map means a slow request, a big bill on paid tiers, and quite
+    // possibly a context-length error the user has to debug. The GitNexus
+    // method never builds the full map, so the warning does not apply.
+    const usingCurrent =
+      (aiSettings?.suggestMethod ?? "current") === "current";
+    if (usingCurrent && (mapTokenCount ?? 0) > 50_000) {
+      const confirmed = await window.LARPGent.confirmDialog({
+        message: "Send a very large suggestion prompt?",
+        detail:
+          `The full-skeleton map for this project is about ` +
+          `${(mapTokenCount ?? 0).toLocaleString()} tokens, above the ` +
+          `50,000-token guidance for the current suggestion method. Most ` +
+          `providers will still accept it, but expect a slow response and a ` +
+          `higher bill.\n\n` +
+          `Switch to the GitNexus suggestion method in Settings to search ` +
+          `locally first and send only a targeted skeleton, or deselect ` +
+          `files in the project tree before asking for suggestions.`,
+        confirmLabel: "Send anyway",
+        tone: "warning",
+      });
+      if (!confirmed) return;
     }
     const filePaths: string[] = [];
     const walk = (node: FileNode): void => {

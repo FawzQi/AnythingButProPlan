@@ -10,6 +10,13 @@ import { AiSettingsPanel } from './AiSettingsPanel'
 
 const TOKEN_WARNING_THRESHOLD = 100_000
 
+/**
+ * Threshold above which the current (full-skeleton) suggestion method is
+ * likely to be slow, expensive, or rejected outright. Matches the store's
+ * confirm-dialog threshold so the persistent banner and the prompt agree.
+ */
+const SUGGEST_MAP_WARNING_THRESHOLD = 50_000
+
 function TabButton({
   active,
   onClick,
@@ -83,6 +90,28 @@ function PromptTab(): ReactElement {
             Prompt is ~{displayTokens.toLocaleString()} tokens, above the{' '}
             {TOKEN_WARNING_THRESHOLD.toLocaleString()} token guidance. Most models will still
             accept it, but expect slower or truncated responses.
+          </Banner>
+        </div>
+      ) : null}
+
+      {(aiSettings?.suggestMethod ?? 'current') === 'current' &&
+      mapTokenCount !== null &&
+      mapTokenCount > SUGGEST_MAP_WARNING_THRESHOLD ? (
+        <div className="p-2">
+          <Banner tone="warn">
+            The full-skeleton map for this project is ~
+            {mapTokenCount.toLocaleString()} tokens, above the{' '}
+            {SUGGEST_MAP_WARNING_THRESHOLD.toLocaleString()}-token guidance for
+            the current suggestion method. “Suggest files” will send the whole
+            map in one call. Switch to the GitNexus method in{' '}
+            <button
+              type="button"
+              className="text-sky-400 underline hover:text-sky-300"
+              onClick={() => setEditorTab('settings')}
+            >
+              Settings
+            </button>{' '}
+            to search locally first and send only a targeted skeleton.
           </Banner>
         </div>
       ) : null}
@@ -182,9 +211,15 @@ function PromptTab(): ReactElement {
               tone={aiLastSuggestion.hallucinated.length > 0 ? 'warn' : 'success'}
             >
               {aiLastSuggestion.paths.length} file(s) selected via{' '}
-              {aiLastSuggestion.provider}/{aiLastSuggestion.model} —{' '}
-              {aiLastSuggestion.mapTokens.toLocaleString()} map tokens,{' '}
+              {aiLastSuggestion.provider}/{aiLastSuggestion.model}
+              {aiLastSuggestion.method === 'gitnexus'
+                ? ` (gitnexus: ${(aiLastSuggestion.candidateCount ?? 0).toLocaleString()} candidates)`
+                : ' (current: full map)'}{' '}
+              — {aiLastSuggestion.mapTokens.toLocaleString()} map tokens,{' '}
               {aiLastSuggestion.durationMs.toLocaleString()} ms
+              {aiLastSuggestion.gitnexusMissing
+                ? ' — gitnexus CLI not found, BM25 search only'
+                : ''}
               {aiLastSuggestion.hallucinated.length > 0
                 ? ` — dropped ${aiLastSuggestion.hallucinated.length} nonexistent path(s)`
                 : ''}

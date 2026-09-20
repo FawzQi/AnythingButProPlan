@@ -55,6 +55,7 @@ import { applyFiles, computeDiff } from "./services/apply-engine";
 import { parseResponse } from "./services/response-parser";
 import { getApiKey, getSettings, saveSettings } from "./services/settings";
 import { suggestFiles } from "./services/file-selector";
+import { suggestFilesGitNexus } from "./services/gitnexus-selector";
 import { discoverModels, listProviders } from "./services/ai-providers";
 
 function requireString(value: unknown, label: string): string {
@@ -186,10 +187,19 @@ export function registerIpcHandlers(): void {
       // `undefined` means "leave unchanged"; `null` means "clear the
       // selection". `saveSettings` distinguishes the two internally, so
       // passing each field straight through is the correct behaviour.
+      //
+      // Every field on `AiSettingsSaveRequest` must be forwarded here. This
+      // handler builds a fresh object rather than spreading `typed`, so a
+      // field that is not listed below is silently dropped before it
+      // reaches `saveSettings` — which is exactly what was happening to
+      // `suggestMethod`: the renderer sent it, the preload forwarded it,
+      // and this object literal discarded it, so the setting never
+      // persisted and the radio button snapped back to the old value.
       return saveSettings({
         provider: typed?.provider,
         model: typed?.model,
         apiKey: typed?.apiKey,
+        suggestMethod: typed?.suggestMethod,
       });
     },
   );
@@ -232,15 +242,27 @@ export function registerIpcHandlers(): void {
       if (!Array.isArray(typed?.filePaths)) {
         throw new Error("Invalid filePaths: expected an array.");
       }
-      return suggestFiles(
-        {
-          projectRoot: requireString(typed?.projectRoot, "projectRoot"),
-          filePaths: typed.filePaths.map((p) => requireString(p, "file path")),
-          instruction: typeof typed?.instruction === "string" ? typed.instruction : "",
-          dryRun: typed?.dryRun,
-        },
-        settings.provider ?? "deepseek", // fallback for dryRun
-      );
+      const normalised: AiSuggestRequest = {
+        projectRoot: requireString(typed?.projectRoot, "projectRoot"),
+        filePaths: typed.filePaths.map((p) => requireString(p, "file path")),
+        instruction:
+          typeof typed?.instruction === "string" ? typed.instruction : "",
+        dryRun: typed?.dryRun,
+      };
+      // A dry run only measures the full-skeleton token count for the
+      // "this map is huge" warning. That number is produced by the current
+      // method's map builder, regardless of which pipeline the user picked.
+      if (normalised.dryRun) {
+        return suggestFiles(normalised, settings.provider ?? "deepseek");
+      }
+      const method = settings.suggestMethod ?? "current";
+      if (method === "gitnexus") {
+        return suggestFilesGitNexus(
+          normalised,
+          settings.provider ?? "deepseek",
+        );
+      }
+      return suggestFiles(normalised, settings.provider ?? "deepseek");
     },
   );
 

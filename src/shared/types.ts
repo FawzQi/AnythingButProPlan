@@ -313,6 +313,16 @@ export interface GitDiffContent {
 
 export type AiProviderId = 'deepseek' | 'groq' | 'openrouter' | 'google'
 
+/**
+ * Which pipeline the "Suggest files" button runs.
+ *
+ *   - `current`  — send a skeleton of every file to the model in one call.
+ *   - `gitnexus` — two-stage pipeline: blind keyword expansion, hybrid
+ *                  GitNexus + BM25 search, git-history reranking, then a
+ *                  targeted skeleton of only the surviving candidates.
+ */
+export type SuggestMethod = 'current' | 'gitnexus'
+
 export interface AiProviderInfo {
   id: AiProviderId
   /** Human-readable name for the settings UI. */
@@ -335,6 +345,11 @@ export interface AiSettings {
   modelByProvider: Partial<Record<AiProviderId, string>>
   /** True when a key has been saved for this provider. */
   hasApiKey: Partial<Record<AiProviderId, boolean>>
+  /**
+   * Which file-suggestion pipeline the "Suggest files" button runs. Defaults
+   * to `current` so an existing install keeps its behaviour after upgrade.
+   */
+  suggestMethod: SuggestMethod
 }
 
 export interface AiSettingsSaveRequest {
@@ -343,6 +358,8 @@ export interface AiSettingsSaveRequest {
   model?: { provider: AiProviderId; model: string }
   /** Set or replace the API key for one provider. Empty string clears it. */
   apiKey?: { provider: AiProviderId; key: string }
+  /** Switch the file-suggestion pipeline. */
+  suggestMethod?: SuggestMethod
 }
 
 export interface AiSuggestRequest {
@@ -373,4 +390,23 @@ export interface AiSuggestion {
    * the UI can warn the user that the model hallucinated; never applied.
    */
   hallucinated: string[]
+  /** Which pipeline produced this suggestion. */
+  method?: SuggestMethod
+  /**
+   * Tokens consumed by the stage-1 keyword expansion call. Only present for
+   * the `gitnexus` method, which is the only one with a stage 1.
+   */
+  stage1Tokens?: number
+  /**
+   * How many candidates survived hybrid search + reranking and were handed
+   * to the stage-2 ranking call. Only present for the `gitnexus` method.
+   */
+  candidateCount?: number
+  /**
+   * True when the GitNexus method was selected but the `gitnexus` CLI was
+   * not found on PATH. The pipeline degrades to BM25-only search in that
+   * case; the flag lets the UI say so instead of silently producing weaker
+   * results.
+   */
+  gitnexusMissing?: boolean
 }

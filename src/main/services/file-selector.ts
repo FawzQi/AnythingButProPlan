@@ -36,7 +36,7 @@ Rules:
  * Validates every survivor against the actual tree so a hallucinated path
  * never reaches the UI as if it were real.
  */
-function parseSuggestedFiles(
+export function parseSuggestedFiles(
   text: string,
   known: Set<string>,
 ): { paths: string[]; purposes: Record<string, string>; hallucinated: string[] } {
@@ -96,6 +96,7 @@ export async function suggestFiles(
       outputTokens: 0,
       durationMs: 0,
       hallucinated: [],
+      method: 'current',
     }
   }
 
@@ -144,5 +145,6 @@ export async function suggestFiles(
     outputTokens: countTokens(text),
     durationMs,
     hallucinated,
+    method: 'current',
   }
 }

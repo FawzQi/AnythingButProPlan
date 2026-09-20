@@ -5,6 +5,7 @@ import type {
   AiProviderId,
   AiSettings,
   AiSettingsSaveRequest,
+  SuggestMethod,
 } from '@shared/types'
 
 /**
@@ -20,12 +21,19 @@ interface StoredShape {
   /** Base64-encoded, safeStorage-encrypted ciphertext per provider. */
   encryptedKeys: Partial<Record<AiProviderId, string>>
   modelByProvider: Partial<Record<AiProviderId, string>>
+  /**
+   * Which file-suggestion pipeline the UI should run. Defaults to `current`
+   * so an existing install keeps behaving exactly as it did before this
+   * field existed.
+   */
+  suggestMethod: SuggestMethod
 }
 
 const EMPTY: StoredShape = {
   provider: null,
   encryptedKeys: {},
   modelByProvider: {},
+  suggestMethod: 'current',
 }
 
 function settingsPath(): string {
@@ -40,6 +48,10 @@ async function readStored(): Promise<StoredShape> {
       provider: parsed.provider ?? null,
       encryptedKeys: parsed.encryptedKeys ?? {},
       modelByProvider: parsed.modelByProvider ?? {},
+      // An older settings file has no `suggestMethod`; fall back to the
+      // default rather than leaving it undefined.
+      suggestMethod:
+        parsed.suggestMethod === 'gitnexus' ? 'gitnexus' : 'current',
     }
   } catch {
     return { ...EMPTY }
@@ -85,6 +97,7 @@ export async function getSettings(): Promise<AiSettings> {
     provider: stored.provider,
     modelByProvider: stored.modelByProvider,
     hasApiKey,
+    suggestMethod: stored.suggestMethod,
   }
 }
 
@@ -94,6 +107,9 @@ export async function saveSettings(
   const stored = await readStored()
   if (request.provider !== undefined) {
     stored.provider = request.provider
+  }
+  if (request.suggestMethod !== undefined) {
+    stored.suggestMethod = request.suggestMethod
   }
   if (request.model) {
     stored.modelByProvider = {
