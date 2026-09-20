@@ -130,14 +130,66 @@ export function parseResponse(raw: string): ParseResult {
         patches: section.patches,
       })
     }
-    if (usable.length > 0) {
+
+    // A response can legitimately mix patch sections with full-content
+    // sections — e.g. a brand-new file emitted whole, plus SEARCH/REPLACE
+    // edits to two existing files. The patch pass above only captures the
+    // edit sections, so also run the fenced-block pass and keep the blocks
+    // that are not inside a patch section. Without this, every full-content
+    // entry in a mixed response is silently dropped, because the markdown
+    // strategy is never reached once any SEARCH marker is present.
+    //
+    // Both scans are positional: `extractSearchReplaceSections` returns
+    // sections in source order and `extractCodeBlocks` returns blocks in
+    // source order, so a running cursor finds each raw slice at its real
+    // offset even when two sections carry identical text.
+    const patchRanges: Array<{ start: number; end: number }> = []
+    let sectionCursor = 0
+    for (const section of sections) {
+      const start = scan.indexOf(section.rawBlock, sectionCursor)
+      if (start === -1) continue
+      sectionCursor = start + section.rawBlock.length
+      patchRanges.push({ start, end: sectionCursor })
+    }
+
+    const fullContentFiles: ParsedFile[] = []
+    let blockCursor = 0
+    for (const block of extractCodeBlocks(scan)) {
+      const blockStart = scan.indexOf(block.rawBlock, blockCursor)
+      if (blockStart === -1) continue
+      blockCursor = blockStart + block.rawBlock.length
+      // A fenced block that sits inside a patch section is part of the
+      // SEARCH/REPLACE body (an example embedded in the search or replace
+      // text), not a full file. The patch entry above already covers it.
+      const insidePatch = patchRanges.some(
+        (range) => blockStart >= range.start && blockStart < range.end,
+      )
+      if (insidePatch) continue
+      const hint = resolvePath(block)
+      if (hint.path === null) continue
+      fullContentFiles.push(
+        toParsedFile(block, hint.path, hint.source, false),
+      )
+    }
+
+    if (usable.length > 0 || fullContentFiles.length > 0) {
       if (rejected > 0) {
         warnings.push(
           `${rejected} patch section(s) had a missing or unusable path and were dropped.`,
         )
       }
-      return { files: [...deleteEntries, ...usable], strategy: 'patch', warnings }
+      // `patch` labels the response when any patch entry is present, even
+      // though it may also carry full-content entries. When only the
+      // full-content half resolved — a stray SEARCH marker somewhere in
+      // the prose, but no real patch sections — the response is a
+      // markdown result in everything but name.
+      return {
+        files: [...deleteEntries, ...fullContentFiles, ...usable],
+        strategy: usable.length > 0 ? 'patch' : 'markdown',
+        warnings,
+      }
     }
+
     // Nothing usable in the patch dialect; fall through so a malformed
     // response still gets a chance through the fence-based strategies. The
     // delete entries, if any, stay in the pipeline.
