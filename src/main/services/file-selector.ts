@@ -14,7 +14,11 @@ You will receive a skeleton of the project (one entry per file, with its
 exported signatures and dependencies) and a user instruction describing a
 change to make.
 
-Output ONLY a newline-separated list of project-relative file paths.
+Output ONLY a valid JSON object with a single key "files", which is an array of objects.
+Do not output any prose, markdown formatting (like \`\`\`json), or explanatory text. Just the raw JSON.
+Each object in the array must have exactly two keys:
+- "path": the project-relative file path.
+- "purpose": a brief, one-sentence explanation of why this file needs to change.
 
 Rules:
 - Use the exact paths shown in the skeleton. Never invent a path.
@@ -23,45 +27,56 @@ Rules:
   is small.
 - Do not include files whose only role is to be read for context; include the
   files that would actually change.
-- Do not output any explanatory text, prose, markdown fences, bullets, or
-  numbering. One path per line, nothing else.
 - If the change clearly requires a new file, you may include a proposed path
   that does not exist yet, but only if no existing file fits.
 - Skip lock files, generated files, assets, and vendored dependencies.`
 
 /**
- * Pull project-relative paths out of the assistant's text. The model is
- * instructed to return bare paths, one per line, but small models drift —
- * they add backticks, bullets, and "File: " prefixes. Strip those and
- * validate every survivor against the actual tree so a hallucinated path
+ * Pull project-relative paths and their purposes out of the assistant's JSON response.
+ * Validates every survivor against the actual tree so a hallucinated path
  * never reaches the UI as if it were real.
  */
-function parseSuggestedPaths(
+function parseSuggestedFiles(
   text: string,
   known: Set<string>,
-): { paths: string[]; hallucinated: string[] } {
+): { paths: string[]; purposes: Record<string, string>; hallucinated: string[] } {
   const seen = new Set<string>()
   const paths: string[] = []
+  const purposes: Record<string, string> = {}
   const hallucinated: string[] = []
-  for (const rawLine of text.split('\n')) {
-    let line = rawLine.trim()
-    if (line === '') continue
-    // Strip common drift: bullets, numbering, backticks, "File: " prefixes.
-    line = line.replace(/^[-*•]\s+/, '').replace(/^\d+[.)]\s+/, '')
-    line = line.replace(/^`+|`+$/g, '')
-    line = line.replace(/^File:\s*/i, '')
-    line = line.replace(/^"|"$/g, '')
-    // Take the first whitespace-delimited token; models sometimes append a
-    // trailing "(why)" clause.
-    const token = line.split(/\s+/)[0] ?? ''
-    if (token === '') continue
+
+  let cleaned = text.trim()
+  // Strip off common markdown formatting drift 
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '')
+
+  let items: any[] = []
+  try {
+    const parsed = JSON.parse(cleaned)
+    if (Array.isArray(parsed)) {
+      items = parsed
+    } else if (parsed && Array.isArray(parsed.files)) {
+      items = parsed.files
+    }
+  } catch (e) {
+    // Fallback for empty or completely malformed responses
+  }
+
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue
+    const token = item.path?.trim()
+    if (!token) continue
     if (seen.has(token)) continue
     seen.add(token)
-    if (known.has(token)) paths.push(token)
-    else hallucinated.push(token)
+
+    if (known.has(token)) {
+      paths.push(token)
+      purposes[token] = item.purpose?.trim() ?? ''
+    } else {
+      hallucinated.push(token)
+    }
     if (paths.length >= 20) break
   }
-  return { paths, hallucinated }
+  return { paths, purposes, hallucinated }
 }
 
 export async function suggestFiles(
@@ -74,6 +89,7 @@ export async function suggestFiles(
   if (request.dryRun) {
     return {
       paths: [],
+      purposes: {},
       provider: providerId,
       model: '',
       mapTokens,
@@ -112,15 +128,16 @@ export async function suggestFiles(
     system: SYSTEM_PROMPT,
     user,
     maxTokens: 1024,
-    temperature: 0.1,
+    temperature: 0,
   })
   const durationMs = Date.now() - started
 
   const known = new Set(request.filePaths)
-  const { paths, hallucinated } = parseSuggestedPaths(text, known)
+  const { paths, purposes, hallucinated } = parseSuggestedFiles(text, known)
 
   return {
     paths,
+    purposes,
     provider: providerId,
     model,
     mapTokens,

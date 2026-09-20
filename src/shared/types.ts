@@ -358,6 +358,8 @@ export interface AiSuggestRequest {
 export interface AiSuggestion {
   /** Validated paths the AI picked, in the order it returned them. */
   paths: string[]
+  /** Brief explanation of why each file was selected, keyed by path. */
+  purposes: Record<string, string>
   provider: AiProviderId
   model: string
   /** Approximate tokens in the skeleton map that was sent. */

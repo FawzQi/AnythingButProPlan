@@ -31,6 +31,7 @@ const openrouter = makeOpenAiCompatibleProvider({
     'meta-llama/llama-3.3-70b-instruct:free',
     'google/gemini-flash-1.5-8b',
     'qwen/qwen-2.5-72b-instruct',
+    'deepseek/deepseek-v4-flash-0731:free'
   ],
   baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
   // OpenRouter attributes requests to a caller via these headers. They are
