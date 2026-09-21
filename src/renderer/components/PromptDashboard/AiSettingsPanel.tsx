@@ -65,10 +65,11 @@ export function AiSettingsPanel(): ReactElement {
       <p className="mb-3 max-w-2xl text-xs text-slate-400">
         Pick a provider and paste an API key. The key is stored encrypted in
         your OS keychain and is only used from the main process — it never
-        reaches the web view. Free tiers are available from all four
+        reaches the web view. Free tiers are available from the chat
         providers; DeepSeek and Google AI Studio offer the most headroom.
-        The <strong>GitNexus only</strong> method runs entirely offline and
-        does not use an API key at all.
+        <strong> GitNexus only</strong> runs entirely offline and needs no
+        key; <strong>GitNexus + Jev</strong> uses the TypeSafe key and does
+        not contact a chat provider.
       </p>
 
       {providers.length === 0 ? (
@@ -153,6 +154,34 @@ export function AiSettingsPanel(): ReactElement {
                 other two methods. Requires the{" "}
                 <code className="rounded bg-[#2a2f38] px-1">gitnexus</code>{" "}
                 CLI on your PATH; without it only BM25 search runs.
+              </span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2 rounded border border-[#2c3038] px-3 py-2 text-xs transition hover:border-slate-500">
+            <input
+              type="radio"
+              name="suggest-method"
+              className="mt-0.5 size-3.5 shrink-0 accent-sky-500"
+              checked={settings.suggestMethod === "gitnexus-jev"}
+              onChange={() => void save({ suggestMethod: "gitnexus-jev" })}
+            />
+            <span>
+              <span className="block font-medium text-slate-200">
+                GitNexus + Jev — local recall, typed-decision precision
+              </span>
+              <span className="block text-[11px] text-slate-500">
+                Same recall front half as the GitNexus method — GitNexus
+                graph queries, BM25 fallback, git-history reranking — then
+                each surviving candidate is scored by Jev on a 0–3
+                relevance scale. Score 3 with ≥85% confidence is included;
+                score 2 is flagged for your review; 0–1 is dropped. Uses
+                the{" "}
+                <strong>TypeSafe</strong> API key, not a chat provider,
+                and every judgment comes back with a calibrated
+                probability you can act on. Requires the{" "}
+                <code className="rounded bg-[#2a2f38] px-1">gitnexus</code>{" "}
+                CLI on your PATH for graph-query recall; without it only
+                BM25 recall runs.
               </span>
             </span>
           </label>

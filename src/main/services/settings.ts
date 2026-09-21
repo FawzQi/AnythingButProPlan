@@ -57,7 +57,9 @@ async function readStored(): Promise<StoredShape> {
           ? 'gitnexus'
           : parsed.suggestMethod === 'gitnexus-only'
             ? 'gitnexus-only'
-            : 'current',
+            : parsed.suggestMethod === 'gitnexus-jev'
+              ? 'gitnexus-jev'
+              : 'current',
     }
   } catch {
     return { ...EMPTY }

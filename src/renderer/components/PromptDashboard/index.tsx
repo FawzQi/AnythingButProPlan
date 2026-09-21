@@ -178,9 +178,11 @@ function PromptTab(): ReactElement {
             title={
               aiSettings?.suggestMethod === 'gitnexus-only'
                 ? 'Search locally with GitNexus + BM25 — no AI call'
-                : aiSettings?.provider
-                  ? `Ask ${aiSettings.provider} to pick the relevant files`
-                  : 'Configure an AI provider in the Settings tab first'
+                : aiSettings?.suggestMethod === 'gitnexus-jev'
+                  ? 'Search locally, then rank with Jev (TypeSafe key)'
+                  : aiSettings?.provider
+                    ? `Ask ${aiSettings.provider} to pick the relevant files`
+                    : 'Configure an AI provider in the Settings tab first'
             }
           >
             {aiSuggesting ? 'Thinking…' : '✨ Suggest files'}
@@ -197,9 +199,23 @@ function PromptTab(): ReactElement {
         />
         {aiSettings &&
         aiSettings.suggestMethod !== 'gitnexus-only' &&
+        aiSettings.suggestMethod !== 'gitnexus-jev' &&
         !aiSettings.provider ? (
           <p className="mt-1 text-[11px] text-slate-500">
             No AI provider configured.{' '}
+            <button
+              type="button"
+              className="text-sky-400 hover:text-sky-300"
+              onClick={() => setEditorTab('settings')}
+            >
+              Open Settings
+            </button>
+          </p>
+        ) : null}
+        {aiSettings?.suggestMethod === 'gitnexus-jev' &&
+        !aiSettings.hasApiKey['typesafe'] ? (
+          <p className="mt-1 text-[11px] text-slate-500">
+            No TypeSafe key saved.{' '}
             <button
               type="button"
               className="text-sky-400 hover:text-sky-300"
@@ -220,6 +236,16 @@ function PromptTab(): ReactElement {
                   via local search (gitnexus-only, no AI call,{' '}
                   {(aiLastSuggestion.candidateCount ?? 0).toLocaleString()}{' '}
                   candidates)
+                </>
+              ) : aiLastSuggestion.method === 'gitnexus-jev' ? (
+                <>
+                  via GitNexus recall + Jev precision (
+                  {(aiLastSuggestion.jevIncluded?.length ?? 0).toLocaleString()}{' '}
+                  included,{' '}
+                  {(aiLastSuggestion.jevFlagged?.length ?? 0).toLocaleString()}{' '}
+                  for review,{' '}
+                  {(aiLastSuggestion.jevDropped?.length ?? 0).toLocaleString()}{' '}
+                  dropped) — {aiLastSuggestion.model}
                 </>
               ) : (
                 <>

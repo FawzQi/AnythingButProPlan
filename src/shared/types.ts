@@ -311,7 +311,18 @@ export interface GitDiffContent {
  * AI file selection
  * ------------------------------------------------------------------------ */
 
-export type AiProviderId = 'deepseek' | 'groq' | 'openrouter' | 'google'
+export type AiProviderId =
+  | 'deepseek'
+  | 'groq'
+  | 'openrouter'
+  | 'google'
+  /**
+   * TypeSafe hosts the Jev typed-decision model. It is not a chat provider —
+   * `complete()` on the provider entry throws — but registering it here
+   * gives the Jev API key the same encrypted-at-rest storage that the chat
+   * providers get, and puts the Jev model names in the settings picker.
+   */
+  | 'typesafe'
 
 /**
  * Which pipeline the "Suggest files" button runs.
@@ -328,8 +339,20 @@ export type AiProviderId = 'deepseek' | 'groq' | 'openrouter' | 'google'
  *                       call, no API key required, zero token cost. Useful
  *                       offline, on a metered connection, or on a project
  *                       where the user wants predictable behaviour.
+ *   - `gitnexus-jev`  — same recall front half as `gitnexus`, but the
+ *                       precision pass uses Jev (a typed-decision model)
+ *                       instead of a chat completion. Each candidate gets
+ *                       one `Score` question asking how relevant it is;
+ *                       the returned scores and calibrated confidences are
+ *                       routed into include / flag-for-review / drop.
+ *                       Requires a TypeSafe API key; no chat provider is
+ *                       contacted.
  */
-export type SuggestMethod = 'current' | 'gitnexus' | 'gitnexus-only'
+export type SuggestMethod =
+  | 'current'
+  | 'gitnexus'
+  | 'gitnexus-only'
+  | 'gitnexus-jev'
 
 export interface AiProviderInfo {
   id: AiProviderId
@@ -417,4 +440,35 @@ export interface AiSuggestion {
    * results.
    */
   gitnexusMissing?: boolean
+
+  /**
+   * Per-file Jev relevance score (0–3) keyed by path. Only present for the
+   * `gitnexus-jev` method.
+   */
+  jevScores?: Record<string, number>
+  /**
+   * Per-file Jev confidence (0–1) keyed by path. Present for the
+   * `gitnexus-jev` method. This is the calibrated probability Jev reports
+   * for its own answer, and it is what the routing thresholds read.
+   */
+  jevConfidence?: Record<string, number>
+  /**
+   * Paths Jev scored 3 with high confidence. These are the entries the user
+   * sees pre-selected in the tree.
+   */
+  jevIncluded?: string[]
+  /**
+   * Paths Jev scored 2. Surfaced for human review rather than selected by
+   * default — the "flag for review" tier of the routing rule.
+   */
+  jevFlagged?: string[]
+  /**
+   * Paths Jev scored 0 or 1. Dropped from the suggestion entirely; kept in
+   * the result so the UI can report how many were filtered out.
+   */
+  jevDropped?: string[]
+  /** Number of Jev API calls made. Only present for `gitnexus-jev`. */
+  jevBatchCount?: number
+  /** Input tokens billed by Jev. Only present for `gitnexus-jev`. */
+  jevTokens?: number
 }

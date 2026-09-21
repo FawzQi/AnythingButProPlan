@@ -1,6 +1,7 @@
 import type { AiProviderId, AiProviderInfo } from '@shared/types'
 import { makeOpenAiCompatibleProvider } from './openai-compatible'
 import { googleProvider } from './google'
+import { typesafeProvider } from './typesafe'
 import type { AiProvider } from './types'
 
 const deepseek = makeOpenAiCompatibleProvider({
@@ -46,6 +47,9 @@ const PROVIDERS: Record<AiProviderId, AiProvider> = {
   groq,
   openrouter,
   google: googleProvider,
+  // TypeSafe is registered for key storage and model selection only. Its
+  // `complete()` throws — see `typesafe.ts` for why.
+  typesafe: typesafeProvider,
 }
 
 export function getProvider(id: AiProviderId): AiProvider {

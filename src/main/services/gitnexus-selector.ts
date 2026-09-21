@@ -17,6 +17,7 @@ import {
 } from './semantic-index'
 import { resolveWithinRoot } from './fs-service'
 import { parseSuggestedFiles } from './file-selector'
+import { scoreCandidatesWithJev } from './jev'
 
 /**
  * GitNexus-driven file suggestion.
@@ -619,4 +620,211 @@ export async function suggestFilesGitNexusOnly(
     candidateCount: candidates.length,
     gitnexusMissing,
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Jev variant — local recall, Jev precision
+ * ------------------------------------------------------------------ */
+
+/**
+ * Score at or above which a Jev answer is treated as "include". Anything
+ * at 2 is flagged for human review; anything at 0–1 is dropped. The
+ * thresholds live here rather than in the routing loop so the two numbers
+ * are visible together and can be tuned in one place once the user has
+ * validated them against their own repository's history.
+ */
+const JEV_INCLUDE_SCORE = 3
+const JEV_REVIEW_SCORE = 2
+/**
+ * Confidence floor for automatic inclusion. Jev's confidences are
+ * calibrated, so a 0.85 really does mean roughly 85% likely correct. A
+ * score-3 answer below this floor lands in the review bucket instead of
+ * the include bucket — the score says "relevant", the confidence says
+ * "verify before trusting".
+ */
+const JEV_HIGH_CONFIDENCE = 0.85
+
+/**
+ * Same recall front half as `suggestFilesGitNexusOnly` — instruction
+ * tokenized locally, GitNexus + BM25 hybrid search, git-history rerank —
+ * but the surviving candidates are handed to Jev for a per-file relevance
+ * judgment instead of being returned as-is.
+ *
+ * The three-way routing rule maps Jev's calibrated output onto the UI:
+ *
+ *   score 3 + confidence ≥ 0.85  → included (pre-selected in the tree)
+ *   score 2, or score 3 low-conf  → flagged for review
+ *   score 0–1                    → dropped, counted but not shown
+ *
+ * No chat provider is contacted. The only outbound call is to TypeSafe,
+ * and its cost is bounded by the candidate set size — Jev bills input
+ * tokens, and the batch size keeps the round-trip count low.
+ */
+export async function suggestFilesGitNexusJev(
+  request: AiSuggestRequest,
+): Promise<AiSuggestion> {
+  const started = Date.now()
+  const known = new Set(request.filePaths)
+
+  // --- Context ingestion ------------------------------------------------
+  const { history, recentFiles } = await readGitContext(
+    request.projectRoot,
+    known,
+  )
+
+  // --- Local keyword extraction ----------------------------------------
+  const terms = tokenize(request.instruction)
+  if (terms.length === 0) terms.push(request.instruction)
+
+  // --- Hybrid recall ---------------------------------------------------
+  const { gitnexusHits, bm25Hits, gitnexusMissing } = await hybridSearch(
+    request.projectRoot,
+    request.filePaths,
+    terms,
+  )
+
+  const candidates = aggregateCandidates({
+    gitnexusHits,
+    bm25Hits,
+    history,
+    recentFiles,
+    known,
+  })
+
+  if (candidates.length === 0) {
+    return {
+      paths: [],
+      purposes: {},
+      provider: 'typesafe',
+      model: '',
+      mapTokens: 0,
+      outputTokens: 0,
+      durationMs: Date.now() - started,
+      hallucinated: [],
+      method: 'gitnexus-jev',
+      candidateCount: 0,
+      gitnexusMissing,
+      jevScores: {},
+      jevConfidence: {},
+      jevIncluded: [],
+      jevFlagged: [],
+      jevDropped: [],
+      jevBatchCount: 0,
+      jevTokens: 0,
+    }
+  }
+
+  // --- Skeleton for the surviving candidates ---------------------------
+  const candidatePaths = candidates.map((candidate) => candidate.path)
+  const map = await buildCodebaseMap(request.projectRoot, candidatePaths)
+  const skeletonByPath = splitSkeletonMap(map.text)
+
+  // --- Jev precision ---------------------------------------------------
+  const apiKey = await getApiKey('typesafe')
+  if (!apiKey) {
+    throw new Error(
+      'No TypeSafe API key saved. Add one in the Settings tab to use the ' +
+        '"GitNexus + Jev" suggestion method.',
+    )
+  }
+  const model = await resolveModel('typesafe', 'jev-latest')
+
+  const jev = await scoreCandidatesWithJev({
+    apiKey,
+    model,
+    instruction: request.instruction,
+    candidates: candidates.map((candidate) => ({
+      path: candidate.path,
+      skeleton: skeletonByPath.get(candidate.path) ?? candidate.path,
+    })),
+  })
+
+  // --- Routing ---------------------------------------------------------
+  const scoresByPath: Record<string, number> = {}
+  const confidenceByPath: Record<string, number> = {}
+  const reasonsByPath = new Map(
+    candidates.map((candidate) => [candidate.path, candidate.reasons]),
+  )
+  const included: string[] = []
+  const flagged: string[] = []
+  const dropped: string[] = []
+  const purposes: Record<string, string> = {}
+
+  const formatReason = (path: string): string => {
+    const reasons = reasonsByPath.get(path) ?? []
+    return reasons.length > 0 ? ` — ${reasons.join(', ')}` : ''
+  }
+
+  for (const result of jev.results) {
+    scoresByPath[result.path] = result.score
+    confidenceByPath[result.path] = result.confidence
+    const confidencePct = Math.round(result.confidence * 100)
+
+    const isInclude =
+      result.score >= JEV_INCLUDE_SCORE &&
+      result.confidence >= JEV_HIGH_CONFIDENCE
+
+    if (isInclude) {
+      included.push(result.path)
+      purposes[result.path] =
+        `Jev ${result.score}/3, ${confidencePct}% confident` +
+        formatReason(result.path)
+      continue
+    }
+
+    if (result.score >= JEV_REVIEW_SCORE) {
+      flagged.push(result.path)
+      purposes[result.path] =
+        `Jev ${result.score}/3, ${confidencePct}% confident — review` +
+        formatReason(result.path)
+      continue
+    }
+
+    dropped.push(result.path)
+  }
+
+  // Included files come first because that is the order the tree selection
+  // applies them in; flagged files follow so the user can eyeball them
+  // without hunting through the list.
+  const orderedPaths = [...included, ...flagged]
+
+  return {
+    paths: orderedPaths,
+    purposes,
+    provider: 'typesafe',
+    model,
+    mapTokens: countTokens(map.text),
+    outputTokens: 0,
+    durationMs: Date.now() - started,
+    hallucinated: [],
+    method: 'gitnexus-jev',
+    candidateCount: candidates.length,
+    gitnexusMissing,
+    jevScores: scoresByPath,
+    jevConfidence: confidenceByPath,
+    jevIncluded: included,
+    jevFlagged: flagged,
+    jevDropped: dropped,
+    jevBatchCount: jev.batches,
+    jevTokens: jev.tokens,
+  }
+}
+
+/**
+ * Recover per-file sections from the joined map that `buildCodebaseMap`
+ * produces. Entries are separated by a blank line and start with the path
+ * followed by two or more spaces and a bracketed header — see
+ * `formatSkeleton` in `codebase-map.ts`. The regex is deliberately loose
+ * about the exact header contents so a change to `formatSkeleton` does not
+ * silently break the split; the invariant this depends on is only "path,
+ * then whitespace, then a bracket".
+ */
+function splitSkeletonMap(text: string): Map<string, string> {
+  const sections = new Map<string, string>()
+  for (const section of text.split('\n\n')) {
+    const firstLine = section.split('\n')[0] ?? ''
+    const match = /^(.+?)\s{2,}\[/.exec(firstLine)
+    if (match?.[1]) sections.set(match[1], section)
+  }
+  return sections
 }

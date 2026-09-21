@@ -334,12 +334,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         aiSuggesting: false,
         aiLastSuggestion: suggestion,
-        // A gitnexus-only run never builds the full skeleton, so its
-        // `mapTokens` is zero. Overwriting the cached count with that would
-        // silently disable the "map is too big" warning for the current
-        // method on the next project refresh. Keep the previous value when
-        // the local method produced the suggestion.
-        ...(suggestion.method === "gitnexus-only"
+        // The local and Jev methods never build the full skeleton, so their
+        // `mapTokens` is zero or a targeted candidate count. Overwriting
+        // the cached full-map count with either would silently disable the
+        // "map is too big" warning for the current method on the next
+        // project refresh. Keep the previous value for those two methods.
+        ...(suggestion.method === "gitnexus-only" ||
+        suggestion.method === "gitnexus-jev"
           ? {}
           : { mapTokenCount: suggestion.mapTokens }),
       });

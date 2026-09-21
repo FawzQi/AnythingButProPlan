@@ -58,6 +58,7 @@ import { suggestFiles } from "./services/file-selector";
 import {
   suggestFilesGitNexus,
   suggestFilesGitNexusOnly,
+  suggestFilesGitNexusJev,
 } from "./services/gitnexus-selector";
 import { discoverModels, listProviders } from "./services/ai-providers";
 
@@ -262,6 +263,12 @@ export function registerIpcHandlers(): void {
           normalised,
           settings.provider ?? "deepseek",
         );
+      }
+      // The Jev variant talks to TypeSafe, not to a chat provider, so the
+      // chat-provider check below does not apply. The selector reads the
+      // TypeSafe key itself and raises a targeted error if it is missing.
+      if (method === "gitnexus-jev") {
+        return suggestFilesGitNexusJev(normalised);
       }
       if (!settings.provider) {
         throw new Error(
