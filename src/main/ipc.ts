@@ -55,7 +55,10 @@ import { applyFiles, computeDiff } from "./services/apply-engine";
 import { parseResponse } from "./services/response-parser";
 import { getApiKey, getSettings, saveSettings } from "./services/settings";
 import { suggestFiles } from "./services/file-selector";
-import { suggestFilesGitNexus } from "./services/gitnexus-selector";
+import {
+  suggestFilesGitNexus,
+  suggestFilesGitNexusOnly,
+} from "./services/gitnexus-selector";
 import { discoverModels, listProviders } from "./services/ai-providers";
 
 function requireString(value: unknown, label: string): string {
@@ -233,12 +236,6 @@ export function registerIpcHandlers(): void {
     async (_event, request: unknown): Promise<AiSuggestion> => {
       const typed = request as AiSuggestRequest;
       const settings = await getSettings();
-      // Skip the provider check if we're only doing a dry-run token count
-      if (!typed?.dryRun && !settings.provider) {
-        throw new Error(
-          "No AI provider selected. Choose one in the Settings tab.",
-        );
-      }
       if (!Array.isArray(typed?.filePaths)) {
         throw new Error("Invalid filePaths: expected an array.");
       }
@@ -256,13 +253,25 @@ export function registerIpcHandlers(): void {
         return suggestFiles(normalised, settings.provider ?? "deepseek");
       }
       const method = settings.suggestMethod ?? "current";
-      if (method === "gitnexus") {
-        return suggestFilesGitNexus(
+      // The no-LLM variant never calls a provider, so it does not require
+      // an API key. Falling through to the provider check below would
+      // refuse the request for a user who has not configured one — which
+      // is exactly the user most likely to want an offline method.
+      if (method === "gitnexus-only") {
+        return suggestFilesGitNexusOnly(
           normalised,
           settings.provider ?? "deepseek",
         );
       }
-      return suggestFiles(normalised, settings.provider ?? "deepseek");
+      if (!settings.provider) {
+        throw new Error(
+          "No AI provider selected. Choose one in the Settings tab.",
+        );
+      }
+      if (method === "gitnexus") {
+        return suggestFilesGitNexus(normalised, settings.provider);
+      }
+      return suggestFiles(normalised, settings.provider);
     },
   );
 

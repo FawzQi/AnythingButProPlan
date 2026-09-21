@@ -316,12 +316,20 @@ export type AiProviderId = 'deepseek' | 'groq' | 'openrouter' | 'google'
 /**
  * Which pipeline the "Suggest files" button runs.
  *
- *   - `current`  — send a skeleton of every file to the model in one call.
- *   - `gitnexus` — two-stage pipeline: blind keyword expansion, hybrid
- *                  GitNexus + BM25 search, git-history reranking, then a
- *                  targeted skeleton of only the surviving candidates.
+ *   - `current`       — send a skeleton of every file to the model in one
+ *                       call.
+ *   - `gitnexus`      — two-stage pipeline: blind keyword expansion, hybrid
+ *                       GitNexus + BM25 search, git-history reranking, then
+ *                       a targeted skeleton of only the surviving
+ *                       candidates handed back to the model for the final
+ *                       ranking.
+ *   - `gitnexus-only` — same recall + rerank front half as `gitnexus`, but
+ *                       the ranked candidate list IS the answer. No model
+ *                       call, no API key required, zero token cost. Useful
+ *                       offline, on a metered connection, or on a project
+ *                       where the user wants predictable behaviour.
  */
-export type SuggestMethod = 'current' | 'gitnexus'
+export type SuggestMethod = 'current' | 'gitnexus' | 'gitnexus-only'
 
 export interface AiProviderInfo {
   id: AiProviderId

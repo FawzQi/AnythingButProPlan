@@ -67,6 +67,8 @@ export function AiSettingsPanel(): ReactElement {
         your OS keychain and is only used from the main process — it never
         reaches the web view. Free tiers are available from all four
         providers; DeepSeek and Google AI Studio offer the most headroom.
+        The <strong>GitNexus only</strong> method runs entirely offline and
+        does not use an API key at all.
       </p>
 
       {providers.length === 0 ? (
@@ -125,6 +127,32 @@ export function AiSettingsPanel(): ReactElement {
                 <code className="rounded bg-[#2a2f38] px-1">gitnexus</code>{" "}
                 CLI on your PATH — without it the pipeline still runs, but
                 the graph-query half is skipped and only BM25 search is used.
+              </span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2 rounded border border-[#2c3038] px-3 py-2 text-xs transition hover:border-slate-500">
+            <input
+              type="radio"
+              name="suggest-method"
+              className="mt-0.5 size-3.5 shrink-0 accent-sky-500"
+              checked={settings.suggestMethod === "gitnexus-only"}
+              onChange={() => void save({ suggestMethod: "gitnexus-only" })}
+            />
+            <span>
+              <span className="block font-medium text-slate-200">
+                GitNexus only — local search, no AI call
+              </span>
+              <span className="block text-[11px] text-slate-500">
+                Same recall and rerank front half as the GitNexus method —
+                GitNexus graph queries, BM25 fallback, git-history
+                reranking — but the ranked candidate list <em>is</em> the
+                answer. No model call, no API key required, zero token
+                cost. Keywords come from the instruction text itself
+                rather than an LLM expansion, so natural-language
+                descriptions of behaviour land less precisely than the
+                other two methods. Requires the{" "}
+                <code className="rounded bg-[#2a2f38] px-1">gitnexus</code>{" "}
+                CLI on your PATH; without it only BM25 search runs.
               </span>
             </span>
           </label>

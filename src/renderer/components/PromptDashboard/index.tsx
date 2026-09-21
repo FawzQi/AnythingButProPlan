@@ -176,9 +176,11 @@ function PromptTab(): ReactElement {
             onClick={() => void suggestFiles()}
             disabled={aiSuggesting || customPrompt.trim() === ''}
             title={
-              aiSettings?.provider
-                ? `Ask ${aiSettings.provider} to pick the relevant files`
-                : 'Configure an AI provider in the Settings tab first'
+              aiSettings?.suggestMethod === 'gitnexus-only'
+                ? 'Search locally with GitNexus + BM25 — no AI call'
+                : aiSettings?.provider
+                  ? `Ask ${aiSettings.provider} to pick the relevant files`
+                  : 'Configure an AI provider in the Settings tab first'
             }
           >
             {aiSuggesting ? 'Thinking…' : '✨ Suggest files'}
@@ -193,7 +195,9 @@ function PromptTab(): ReactElement {
           rows={3}
           className="w-full resize-y rounded border border-[#2c3038] bg-[#12141a] p-2 text-xs text-slate-200 outline-none focus:border-sky-600"
         />
-        {aiSettings && !aiSettings.provider ? (
+        {aiSettings &&
+        aiSettings.suggestMethod !== 'gitnexus-only' &&
+        !aiSettings.provider ? (
           <p className="mt-1 text-[11px] text-slate-500">
             No AI provider configured.{' '}
             <button
@@ -210,11 +214,21 @@ function PromptTab(): ReactElement {
             <Banner
               tone={aiLastSuggestion.hallucinated.length > 0 ? 'warn' : 'success'}
             >
-              {aiLastSuggestion.paths.length} file(s) selected via{' '}
-              {aiLastSuggestion.provider}/{aiLastSuggestion.model}
-              {aiLastSuggestion.method === 'gitnexus'
-                ? ` (gitnexus: ${(aiLastSuggestion.candidateCount ?? 0).toLocaleString()} candidates)`
-                : ' (current: full map)'}{' '}
+              {aiLastSuggestion.paths.length} file(s) selected{' '}
+              {aiLastSuggestion.method === 'gitnexus-only' ? (
+                <>
+                  via local search (gitnexus-only, no AI call,{' '}
+                  {(aiLastSuggestion.candidateCount ?? 0).toLocaleString()}{' '}
+                  candidates)
+                </>
+              ) : (
+                <>
+                  via {aiLastSuggestion.provider}/{aiLastSuggestion.model}
+                  {aiLastSuggestion.method === 'gitnexus'
+                    ? ` (gitnexus: ${(aiLastSuggestion.candidateCount ?? 0).toLocaleString()} candidates)`
+                    : ' (current: full map)'}
+                </>
+              )}{' '}
               — {aiLastSuggestion.mapTokens.toLocaleString()} map tokens,{' '}
               {aiLastSuggestion.durationMs.toLocaleString()} ms
               {aiLastSuggestion.gitnexusMissing

@@ -334,7 +334,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         aiSuggesting: false,
         aiLastSuggestion: suggestion,
-        mapTokenCount: suggestion.mapTokens,
+        // A gitnexus-only run never builds the full skeleton, so its
+        // `mapTokens` is zero. Overwriting the cached count with that would
+        // silently disable the "map is too big" warning for the current
+        // method on the next project refresh. Keep the previous value when
+        // the local method produced the suggestion.
+        ...(suggestion.method === "gitnexus-only"
+          ? {}
+          : { mapTokenCount: suggestion.mapTokens }),
       });
       // Replace the current selection with the AI's pick. Any file not in
       // the suggestion is deselected — the whole point of the feature is to

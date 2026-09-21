@@ -7,7 +7,7 @@ const deepseek = makeOpenAiCompatibleProvider({
   id: 'deepseek',
   label: 'DeepSeek',
   keyUrl: 'https://platform.deepseek.com/api_keys',
-  models: ['deepseek-chat', 'deepseek-reasoner'],
+  models: ['deepseek-chat','deepseek-v4-flash', 'deepseek-v4-pro'],
   baseUrl: 'https://api.deepseek.com/chat/completions',
 })
 
@@ -28,10 +28,9 @@ const openrouter = makeOpenAiCompatibleProvider({
   label: 'OpenRouter',
   keyUrl: 'https://openrouter.ai/keys',
   models: [
-    'meta-llama/llama-3.3-70b-instruct:free',
-    'google/gemini-flash-1.5-8b',
-    'qwen/qwen-2.5-72b-instruct',
-    'deepseek/deepseek-v4-flash-0731:free'
+    'z-ai/glm-5.2:free',
+    'qwen/qwen3.8-27b:free',
+    'inclusionai/ling-3.0-flash-vl:free'
   ],
   baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
   // OpenRouter attributes requests to a caller via these headers. They are

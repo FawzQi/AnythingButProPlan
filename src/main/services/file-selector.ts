@@ -61,6 +61,30 @@ export function parseSuggestedFiles(
     // Fallback for empty or completely malformed responses
   }
 
+  // Second chance: the model wrapped the JSON in prose despite being told
+  // not to. Reasoning models do this more often than chat models, because
+  // their thinking phase bleeds into the visible output. Locate the
+  // outermost brace pair and try again — a cheap recovery that avoids
+  // losing a perfectly good selection to one stray sentence. This is also
+  // what produces the "sometimes the file not consistent" symptom: a
+  // response that parses cleanly on one run and gains a leading sentence on
+  // the next would otherwise silently drop to zero files.
+  if (items.length === 0) {
+    const start = cleaned.indexOf('{')
+    const end = cleaned.lastIndexOf('}')
+    if (start !== -1 && end > start) {
+      try {
+        const sliced = cleaned.slice(start, end + 1)
+        const parsed = JSON.parse(sliced) as Record<string, unknown>
+        if (parsed && Array.isArray(parsed.files)) {
+          items = parsed.files
+        }
+      } catch {
+        // Still unparseable. Fall through to the empty result.
+      }
+    }
+  }
+
   for (const item of items) {
     if (!item || typeof item !== 'object') continue
     const token = item.path?.trim()

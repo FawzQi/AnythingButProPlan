@@ -10,7 +10,11 @@ import { buildCodebaseMap } from './codebase-map'
 import { getProvider } from './ai-providers'
 import { getApiKey, resolveModel } from './settings'
 import { checkGitNexus, queryGitNexus, type GitNexusHit } from './gitnexus'
-import { Bm25Index, type SemanticHit } from './semantic-index'
+import {
+  Bm25Index,
+  tokenize,
+  type SemanticHit,
+} from './semantic-index'
 import { resolveWithinRoot } from './fs-service'
 import { parseSuggestedFiles } from './file-selector'
 
@@ -211,6 +215,72 @@ async function buildShallowIndex(
 }
 
 /* ------------------------------------------------------------------ *
+ * Shared pipeline — used by both the LLM and no-LLM variants
+ * ------------------------------------------------------------------ */
+
+interface GitContext {
+  history: CommitInfo[]
+  recentFiles: string[]
+}
+
+/**
+ * Read the last `MAX_COMMITS` commits and flatten them into a single
+ * most-recent-first file list, capped at `MAX_RECENT_FILES`. Both variants
+ * of the pipeline need this — the LLM variant feeds the recent list to
+ * stage 1 as context, and both variants feed it to the reranker as the
+ * "recent" boost signal.
+ */
+async function readGitContext(
+  root: string,
+  known: Set<string>,
+): Promise<GitContext> {
+  const history = await readRecentGitHistory(root)
+  const recentFiles: string[] = []
+  const seenRecent = new Set<string>()
+  for (const commit of history) {
+    for (const file of commit.files) {
+      if (!known.has(file) || seenRecent.has(file)) continue
+      seenRecent.add(file)
+      recentFiles.push(file)
+      if (recentFiles.length >= MAX_RECENT_FILES) break
+    }
+    if (recentFiles.length >= MAX_RECENT_FILES) break
+  }
+  return { history, recentFiles }
+}
+
+interface HybridSearchResult {
+  gitnexusHits: GitNexusHit[]
+  bm25Hits: SemanticHit[]
+  gitnexusMissing: boolean
+}
+
+/**
+ * Run the GitNexus graph query and the BM25 index in parallel. The graph
+ * query is skipped when the CLI is not on PATH; BM25 always runs, so a
+ * missing tool degrades to keyword-only search rather than an empty result.
+ */
+async function hybridSearch(
+  root: string,
+  filePaths: string[],
+  terms: string[],
+): Promise<HybridSearchResult> {
+  const gitnexusStatus = await checkGitNexus()
+  const [gitnexusHits, index] = await Promise.all([
+    gitnexusStatus.available
+      ? queryGitNexus(root, terms, 60)
+      : Promise.resolve<GitNexusHit[]>([]),
+    buildShallowIndex(root, filePaths),
+  ])
+  const bm25Hits = index.search(terms.join(' '), 60)
+  return {
+    gitnexusHits,
+    bm25Hits,
+    gitnexusMissing: !gitnexusStatus.available,
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * Stage 1 — blind keyword expansion
  * ------------------------------------------------------------------ */
 
@@ -237,6 +307,9 @@ async function expandInstruction(options: {
     model: options.model,
     system: STAGE1_SYSTEM,
     user,
+    // Reasoning models scale this internally — a small base budget here is
+    // deliberately aggressive for chat models, and the provider layer
+    // multiplies it for anything with a thinking phase.
     maxTokens: 512,
     temperature: 0,
   })
@@ -358,18 +431,10 @@ export async function suggestFilesGitNexus(
   const known = new Set(request.filePaths)
 
   // --- Context ingestion ------------------------------------------------
-  const history = await readRecentGitHistory(request.projectRoot)
-  const recentFiles: string[] = []
-  const seenRecent = new Set<string>()
-  for (const commit of history) {
-    for (const file of commit.files) {
-      if (!known.has(file) || seenRecent.has(file)) continue
-      seenRecent.add(file)
-      recentFiles.push(file)
-      if (recentFiles.length >= MAX_RECENT_FILES) break
-    }
-    if (recentFiles.length >= MAX_RECENT_FILES) break
-  }
+  const { history, recentFiles } = await readGitContext(
+    request.projectRoot,
+    known,
+  )
 
   // --- Stage 1: blind keyword expansion --------------------------------
   const stage1 = await expandInstruction({
@@ -391,12 +456,11 @@ export async function suggestFilesGitNexus(
   }
 
   // --- Hybrid search ---------------------------------------------------
-  const gitnexusStatus = await checkGitNexus()
-  const gitnexusHits = gitnexusStatus.available
-    ? await queryGitNexus(request.projectRoot, terms, 60)
-    : []
-  const index = await buildShallowIndex(request.projectRoot, request.filePaths)
-  const bm25Hits = index.search(terms.join(' '), 60)
+  const { gitnexusHits, bm25Hits, gitnexusMissing } = await hybridSearch(
+    request.projectRoot,
+    request.filePaths,
+    terms,
+  )
 
   // --- Aggregate + rerank ---------------------------------------------
   const candidates = aggregateCandidates({
@@ -420,7 +484,7 @@ export async function suggestFilesGitNexus(
       method: 'gitnexus',
       stage1Tokens: stage1.tokens,
       candidateCount: 0,
-      gitnexusMissing: !gitnexusStatus.available,
+      gitnexusMissing,
     }
   }
 
@@ -464,6 +528,95 @@ export async function suggestFilesGitNexus(
     method: 'gitnexus',
     stage1Tokens: stage1.tokens,
     candidateCount: candidates.length,
-    gitnexusMissing: !gitnexusStatus.available,
+    gitnexusMissing,
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * No-LLM variant — local search only
+ * ------------------------------------------------------------------ */
+
+/**
+ * Same recall + rerank front half as `suggestFilesGitNexus`, but stops
+ * before the LLM ranking call. The aggregated, git-history-reranked
+ * candidate list IS the answer.
+ *
+ * The stage-1 blind expansion is replaced by a local tokenizer over the
+ * instruction. That loses the model's vocabulary-bridging trick — a
+ * request like "make login less sluggish" produces the tokens `make`,
+ * `login`, `less`, `sluggish`, none of which appear in `session.ts` or
+ * `auth.ts` — but it costs nothing, runs offline, and requires no API key.
+ * The BM25 IDF term down-weights the common English words that survive
+ * tokenization, and GitNexus's graph query supplies the structural half of
+ * the recall without any model in the loop.
+ *
+ * The reasons collected during aggregation become the per-file "purpose"
+ * so the UI shows *why* each file was picked rather than an empty string —
+ * `gitnexus, recent`, `semantic, co-change`, and so on.
+ */
+export async function suggestFilesGitNexusOnly(
+  request: AiSuggestRequest,
+  providerId: AiProviderId,
+): Promise<AiSuggestion> {
+  const started = Date.now()
+  const known = new Set(request.filePaths)
+
+  // --- Context ingestion ------------------------------------------------
+  const { history, recentFiles } = await readGitContext(
+    request.projectRoot,
+    known,
+  )
+
+  // --- Local keyword extraction ----------------------------------------
+  // No model expands the instruction, so the tokens come straight from the
+  // user's text. `tokenize` already splits camelCase and drops one-character
+  // fragments; the raw instruction is kept as a fallback so a query that
+  // tokenizes to nothing still has something to score against.
+  const terms = tokenize(request.instruction)
+  if (terms.length === 0) terms.push(request.instruction)
+
+  // --- Hybrid search ---------------------------------------------------
+  const { gitnexusHits, bm25Hits, gitnexusMissing } = await hybridSearch(
+    request.projectRoot,
+    request.filePaths,
+    terms,
+  )
+
+  // --- Aggregate + rerank ---------------------------------------------
+  const candidates = aggregateCandidates({
+    gitnexusHits,
+    bm25Hits,
+    history,
+    recentFiles,
+    known,
+  })
+
+  const purposes: Record<string, string> = {}
+  for (const candidate of candidates) {
+    purposes[candidate.path] =
+      candidate.reasons.length > 0
+        ? `matched via ${candidate.reasons.join(', ')}`
+        : 'candidate'
+  }
+
+  return {
+    paths: candidates.map((candidate) => candidate.path),
+    purposes,
+    provider: providerId,
+    // `model` is a display string on the result; nothing was called, so
+    // say so rather than reporting the user's configured model name.
+    model: 'local search',
+    // Nothing was sent to a model, so the token counts are honestly zero.
+    // `mapTokens: 0` also means the "this map is huge" warning stays
+    // silent for this method, which is correct — the whole point of the
+    // no-LLM path is that the map never leaves the machine.
+    mapTokens: 0,
+    outputTokens: 0,
+    durationMs: Date.now() - started,
+    hallucinated: [],
+    method: 'gitnexus-only',
+    stage1Tokens: 0,
+    candidateCount: candidates.length,
+    gitnexusMissing,
   }
 }

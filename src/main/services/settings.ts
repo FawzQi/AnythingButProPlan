@@ -49,9 +49,15 @@ async function readStored(): Promise<StoredShape> {
       encryptedKeys: parsed.encryptedKeys ?? {},
       modelByProvider: parsed.modelByProvider ?? {},
       // An older settings file has no `suggestMethod`; fall back to the
-      // default rather than leaving it undefined.
+      // default rather than leaving it undefined. Anything other than a
+      // known variant is coerced to `current` so a hand-edited settings
+      // file cannot put the app into an unrecognised state.
       suggestMethod:
-        parsed.suggestMethod === 'gitnexus' ? 'gitnexus' : 'current',
+        parsed.suggestMethod === 'gitnexus'
+          ? 'gitnexus'
+          : parsed.suggestMethod === 'gitnexus-only'
+            ? 'gitnexus-only'
+            : 'current',
     }
   } catch {
     return { ...EMPTY }
