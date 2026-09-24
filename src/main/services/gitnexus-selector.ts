@@ -7,7 +7,6 @@ import type {
   AiSuggestRequest,
 } from '@shared/types'
 import { buildCodebaseMap } from './codebase-map'
-import { getProvider } from './ai-providers'
 import { getApiKey, resolveModel } from './settings'
 import { checkGitNexus, queryGitNexus, type GitNexusHit } from './gitnexus'
 import {
@@ -16,40 +15,27 @@ import {
   type SemanticHit,
 } from './semantic-index'
 import { resolveWithinRoot } from './fs-service'
-import { parseSuggestedFiles } from './file-selector'
 import { scoreCandidatesWithJev } from './jev'
 
 /**
  * GitNexus-driven file suggestion.
  *
- * This is the second of the two pipelines the "Suggest files" button can
- * run; the other one (`suggestFiles` in `file-selector.ts`) sends a skeleton
- * of every file to the model in a single call. This one trades that single
- * call for a pipeline that keeps the expensive model call small even on
- * large repositories:
+ * Two pipelines share the same recall front half — GitNexus graph queries
+ * and a local BM25 index over a shallow per-file preview, merged and
+ * reranked by git recency and co-change locality. They differ only in how
+ * the surviving candidates become the final answer:
  *
- *   instruction
- *     ↓
- *   context ingestion   — recent `git log` (last 40 commits)
- *     ↓
- *   stage 1 (blind)     — the model expands the instruction into search
- *                         terms without seeing any code (~500 tokens)
- *     ↓
- *   hybrid search       — GitNexus graph query in parallel with a local
- *                         BM25 index over a shallow per-file preview
- *     ↓
- *   rerank              — merge, weight, boost recently-touched files, and
- *                         boost files that co-change with already-scored
- *                         candidates
- *     ↓
- *   stage 2             — build a skeleton of only the surviving
- *                         candidates (20–40 files) and ask the model to
- *                         rank them
+ *   `gitnexus-only` — the ranked candidate list IS the answer. No model
+ *                     call, no API key, zero token cost.
+ *   `gitnexus-jev`  — each candidate is scored by Jev, a typed-decision
+ *                     model, on a 0–3 relevance scale. The calibrated
+ *                     scores and confidences are routed into include /
+ *                     flag-for-review / drop.
  *
- * Nothing here is GitNexus-specific except the `queryGitNexus` call: when
- * the CLI is missing the hybrid search degrades to BM25 alone and the rest
- * of the pipeline still runs, with `gitnexusMissing` set on the result so
- * the UI can say so.
+ * The recall half is entirely local. `queryGitNexus` shells out to the
+ * user-installed `gitnexus` CLI; when that tool is missing the hybrid
+ * search degrades to BM25 alone and the rest of the pipeline still runs,
+ * with `gitnexusMissing` set on the result so the UI can say so.
  */
 
 const MAX_COMMITS = 40
@@ -57,52 +43,6 @@ const MAX_RECENT_FILES = 60
 const CANDIDATE_LIMIT = 40
 const SHALLOW_BYTES = 2048
 const INDEX_CONCURRENCY = 32
-
-const STAGE1_SYSTEM = `You expand a software-change instruction into search terms.
-
-You will not see any code — only the instruction and a list of recently
-changed file paths. Your job is to predict what an engineer would type into
-a code search box to find the code involved.
-
-Output ONLY a valid JSON object with exactly three keys, each an array of
-strings. No prose, no markdown fences.
-
-- "symbols": identifiers that likely appear in the code — function, class,
-  type, and variable names. camelCase, snake_case, or PascalCase as they
-  would appear in source.
-- "concepts": short lowercase keywords describing the domain, feature, or
-  behaviour, including synonyms the instruction does not use directly.
-- "paths": plausible filename or directory fragments (e.g. "auth", "report",
-  "api-client").
-
-Include 5–15 entries per array. Never invent file paths you saw in the
-recent-files list — those are context, not answers.`
-
-const STAGE2_SYSTEM = `You rank files for a code change.
-
-You will receive a small skeleton of candidate files (paths, exported
-signatures, dependencies, and short previews) and a user instruction
-describing a change. Pick the files that would actually need to change,
-ordered most relevant first.
-
-Output ONLY a valid JSON object with a single key "files": an array of
-objects with exactly two keys:
-- "path": the project-relative file path, exactly as shown.
-- "purpose": a brief, one-sentence explanation of why this file needs to
-  change.
-
-Rules:
-- Use the exact paths shown in the skeleton. Never invent a path.
-- Include 3 to 15 files. Fewer is better when the change is small.
-- Prefer files whose symbols or dependencies line up with the instruction
-  over files that merely mention a keyword.
-- Do not include files that would only be read for context.`
-
-interface Stage1Signals {
-  symbols: string[]
-  concepts: string[]
-  paths: string[]
-}
 
 interface CommitInfo {
   hash: string
@@ -216,7 +156,7 @@ async function buildShallowIndex(
 }
 
 /* ------------------------------------------------------------------ *
- * Shared pipeline — used by both the LLM and no-LLM variants
+ * Shared pipeline — used by both variants
  * ------------------------------------------------------------------ */
 
 interface GitContext {
@@ -227,9 +167,8 @@ interface GitContext {
 /**
  * Read the last `MAX_COMMITS` commits and flatten them into a single
  * most-recent-first file list, capped at `MAX_RECENT_FILES`. Both variants
- * of the pipeline need this — the LLM variant feeds the recent list to
- * stage 1 as context, and both variants feed it to the reranker as the
- * "recent" boost signal.
+ * of the pipeline feed this list to the reranker as the "recent" boost
+ * signal.
  */
 async function readGitContext(
   root: string,
@@ -279,69 +218,6 @@ async function hybridSearch(
     bm25Hits,
     gitnexusMissing: !gitnexusStatus.available,
   }
-}
-
-/* ------------------------------------------------------------------ *
- * Stage 1 — blind keyword expansion
- * ------------------------------------------------------------------ */
-
-async function expandInstruction(options: {
-  providerId: AiProviderId
-  apiKey: string
-  model: string
-  instruction: string
-  recentFiles: string[]
-}): Promise<{ signals: Stage1Signals; tokens: number }> {
-  const provider = getProvider(options.providerId)
-  const user = [
-    'Instruction:',
-    options.instruction.trim(),
-    '',
-    'Recently changed files (most recent first — context only, do not copy):',
-    options.recentFiles.slice(0, 40).join('\n') || '(none)',
-    '',
-    'Return the JSON object now.',
-  ].join('\n')
-
-  const text = await provider.complete({
-    apiKey: options.apiKey,
-    model: options.model,
-    system: STAGE1_SYSTEM,
-    user,
-    // Reasoning models scale this internally — a small base budget here is
-    // deliberately aggressive for chat models, and the provider layer
-    // multiplies it for anything with a thinking phase.
-    maxTokens: 512,
-    temperature: 0,
-  })
-
-  return { signals: parseStage1(text), tokens: countTokens(text) }
-}
-
-function parseStage1(text: string): Stage1Signals {
-  const cleaned = text
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/```\s*$/i, '')
-  try {
-    const parsed = JSON.parse(cleaned) as Record<string, unknown>
-    return {
-      symbols: toStringArray(parsed.symbols),
-      concepts: toStringArray(parsed.concepts),
-      paths: toStringArray(parsed.paths),
-    }
-  } catch {
-    return { symbols: [], concepts: [], paths: [] }
-  }
-}
-
-function toStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  return value
-    .filter((entry): entry is string => typeof entry === 'string')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry !== '')
-    .slice(0, 20)
 }
 
 /* ------------------------------------------------------------------ *
@@ -413,143 +289,22 @@ function aggregateCandidates(input: {
 }
 
 /* ------------------------------------------------------------------ *
- * Entry point
- * ------------------------------------------------------------------ */
-
-export async function suggestFilesGitNexus(
-  request: AiSuggestRequest,
-  providerId: AiProviderId,
-): Promise<AiSuggestion> {
-  const started = Date.now()
-  const provider = getProvider(providerId)
-  const apiKey = await getApiKey(providerId)
-  if (!apiKey) {
-    throw new Error(
-      `No API key saved for ${provider.label}. Add one in the Settings tab.`,
-    )
-  }
-  const model = await resolveModel(providerId, provider.models[0] ?? '')
-  const known = new Set(request.filePaths)
-
-  // --- Context ingestion ------------------------------------------------
-  const { history, recentFiles } = await readGitContext(
-    request.projectRoot,
-    known,
-  )
-
-  // --- Stage 1: blind keyword expansion --------------------------------
-  const stage1 = await expandInstruction({
-    providerId,
-    apiKey,
-    model,
-    instruction: request.instruction,
-    recentFiles,
-  })
-  const terms = [
-    ...stage1.signals.symbols,
-    ...stage1.signals.concepts,
-    ...stage1.signals.paths,
-  ]
-  if (terms.length === 0) {
-    // The model produced nothing usable; fall back to the raw instruction
-    // so the local search at least has something to work with.
-    terms.push(request.instruction)
-  }
-
-  // --- Hybrid search ---------------------------------------------------
-  const { gitnexusHits, bm25Hits, gitnexusMissing } = await hybridSearch(
-    request.projectRoot,
-    request.filePaths,
-    terms,
-  )
-
-  // --- Aggregate + rerank ---------------------------------------------
-  const candidates = aggregateCandidates({
-    gitnexusHits,
-    bm25Hits,
-    history,
-    recentFiles,
-    known,
-  })
-
-  if (candidates.length === 0) {
-    return {
-      paths: [],
-      purposes: {},
-      provider: providerId,
-      model,
-      mapTokens: 0,
-      outputTokens: 0,
-      durationMs: Date.now() - started,
-      hallucinated: [],
-      method: 'gitnexus',
-      stage1Tokens: stage1.tokens,
-      candidateCount: 0,
-      gitnexusMissing,
-    }
-  }
-
-  // --- Stage 2: targeted skeleton + LLM ranking ------------------------
-  const candidatePaths = candidates.map((candidate) => candidate.path)
-  const map = await buildCodebaseMap(request.projectRoot, candidatePaths)
-
-  const user = [
-    'Project skeleton (candidate files only):',
-    '',
-    map.text,
-    '',
-    '---',
-    '',
-    'Instruction:',
-    request.instruction.trim(),
-    '',
-    'Return the ranked file list now.',
-  ].join('\n')
-
-  const text = await provider.complete({
-    apiKey,
-    model,
-    system: STAGE2_SYSTEM,
-    user,
-    maxTokens: 1024,
-    temperature: 0,
-  })
-
-  const { paths, purposes, hallucinated } = parseSuggestedFiles(text, known)
-
-  return {
-    paths,
-    purposes,
-    provider: providerId,
-    model,
-    mapTokens: countTokens(map.text),
-    outputTokens: countTokens(text),
-    durationMs: Date.now() - started,
-    hallucinated,
-    method: 'gitnexus',
-    stage1Tokens: stage1.tokens,
-    candidateCount: candidates.length,
-    gitnexusMissing,
-  }
-}
-
-/* ------------------------------------------------------------------ *
  * No-LLM variant — local search only
  * ------------------------------------------------------------------ */
 
 /**
- * Same recall + rerank front half as `suggestFilesGitNexus`, but stops
- * before the LLM ranking call. The aggregated, git-history-reranked
- * candidate list IS the answer.
+ * Local recall: instruction tokenized locally, GitNexus + BM25 hybrid
+ * search, git-history rerank. The aggregated, reranked candidate list IS
+ * the answer.
  *
- * The stage-1 blind expansion is replaced by a local tokenizer over the
- * instruction. That loses the model's vocabulary-bridging trick — a
- * request like "make login less sluggish" produces the tokens `make`,
- * `login`, `less`, `sluggish`, none of which appear in `session.ts` or
- * `auth.ts` — but it costs nothing, runs offline, and requires no API key.
- * The BM25 IDF term down-weights the common English words that survive
- * tokenization, and GitNexus's graph query supplies the structural half of
- * the recall without any model in the loop.
+ * Because no model expands the instruction, the tokens come straight from
+ * the user's text. That loses the vocabulary-bridging that an LLM
+ * expansion provides — a request like "make login less sluggish" produces
+ * the tokens `make`, `login`, `less`, `sluggish`, none of which appear in
+ * `session.ts` or `auth.ts` — but it costs nothing, runs offline, and
+ * requires no API key. The BM25 IDF term down-weights the common English
+ * words that survive tokenization, and GitNexus's graph query supplies
+ * the structural half of the recall without any model in the loop.
  *
  * The reasons collected during aggregation become the per-file "purpose"
  * so the UI shows *why* each file was picked rather than an empty string —
@@ -569,10 +324,6 @@ export async function suggestFilesGitNexusOnly(
   )
 
   // --- Local keyword extraction ----------------------------------------
-  // No model expands the instruction, so the tokens come straight from the
-  // user's text. `tokenize` already splits camelCase and drops one-character
-  // fragments; the raw instruction is kept as a fallback so a query that
-  // tokenizes to nothing still has something to score against.
   const terms = tokenize(request.instruction)
   if (terms.length === 0) terms.push(request.instruction)
 
@@ -608,9 +359,6 @@ export async function suggestFilesGitNexusOnly(
     // say so rather than reporting the user's configured model name.
     model: 'local search',
     // Nothing was sent to a model, so the token counts are honestly zero.
-    // `mapTokens: 0` also means the "this map is huge" warning stays
-    // silent for this method, which is correct — the whole point of the
-    // no-LLM path is that the map never leaves the machine.
     mapTokens: 0,
     outputTokens: 0,
     durationMs: Date.now() - started,
@@ -645,10 +393,9 @@ const JEV_REVIEW_SCORE = 2
 const JEV_HIGH_CONFIDENCE = 0.85
 
 /**
- * Same recall front half as `suggestFilesGitNexusOnly` — instruction
- * tokenized locally, GitNexus + BM25 hybrid search, git-history rerank —
- * but the surviving candidates are handed to Jev for a per-file relevance
- * judgment instead of being returned as-is.
+ * Same recall front half as `suggestFilesGitNexusOnly`, but the surviving
+ * candidates are handed to Jev for a per-file relevance judgment instead
+ * of being returned as-is.
  *
  * The three-way routing rule maps Jev's calibrated output onto the UI:
  *

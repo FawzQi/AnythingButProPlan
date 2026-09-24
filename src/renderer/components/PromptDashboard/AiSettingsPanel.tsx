@@ -65,8 +65,7 @@ export function AiSettingsPanel(): ReactElement {
       <p className="mb-3 max-w-2xl text-xs text-slate-400">
         Pick a provider and paste an API key. The key is stored encrypted in
         your OS keychain and is only used from the main process — it never
-        reaches the web view. Free tiers are available from the chat
-        providers; DeepSeek and Google AI Studio offer the most headroom.
+        reaches the web view.
         <strong> GitNexus only</strong> runs entirely offline and needs no
         key; <strong>GitNexus + Jev</strong> uses the TypeSafe key and does
         not contact a chat provider.
@@ -87,50 +86,6 @@ export function AiSettingsPanel(): ReactElement {
           File suggestion method
         </label>
         <div className="flex max-w-2xl flex-col gap-2">
-          <label className="flex cursor-pointer items-start gap-2 rounded border border-[#2c3038] px-3 py-2 text-xs transition hover:border-slate-500">
-            <input
-              type="radio"
-              name="suggest-method"
-              className="mt-0.5 size-3.5 shrink-0 accent-sky-500"
-              checked={settings.suggestMethod === "current"}
-              onChange={() => void save({ suggestMethod: "current" })}
-            />
-            <span>
-              <span className="block font-medium text-slate-200">
-                Current — full skeleton map
-              </span>
-              <span className="block text-[11px] text-slate-500">
-                Sends a skeleton of every file in the project to the model in
-                a single call. Simple and reliable, but the request grows
-                linearly with the size of the project, and a large repository
-                can easily exceed what a provider will accept.
-              </span>
-            </span>
-          </label>
-          <label className="flex cursor-pointer items-start gap-2 rounded border border-[#2c3038] px-3 py-2 text-xs transition hover:border-slate-500">
-            <input
-              type="radio"
-              name="suggest-method"
-              className="mt-0.5 size-3.5 shrink-0 accent-sky-500"
-              checked={settings.suggestMethod === "gitnexus"}
-              onChange={() => void save({ suggestMethod: "gitnexus" })}
-            />
-            <span>
-              <span className="block font-medium text-slate-200">
-                GitNexus — hybrid search, targeted skeleton
-              </span>
-              <span className="block text-[11px] text-slate-500">
-                Two-stage pipeline: the model expands your instruction into
-                search terms blind, then local GitNexus graph queries and a
-                BM25 fallback pick 20–40 candidates, git history reranks
-                them, and only those files are sent back for the final
-                ranking. Requires the{" "}
-                <code className="rounded bg-[#2a2f38] px-1">gitnexus</code>{" "}
-                CLI on your PATH — without it the pipeline still runs, but
-                the graph-query half is skipped and only BM25 search is used.
-              </span>
-            </span>
-          </label>
           <label className="flex cursor-pointer items-start gap-2 rounded border border-[#2c3038] px-3 py-2 text-xs transition hover:border-slate-500">
             <input
               type="radio"

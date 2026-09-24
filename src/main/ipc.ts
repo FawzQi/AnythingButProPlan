@@ -54,9 +54,8 @@ import { buildPrompt } from "./services/prompt-builder";
 import { applyFiles, computeDiff } from "./services/apply-engine";
 import { parseResponse } from "./services/response-parser";
 import { getApiKey, getSettings, saveSettings } from "./services/settings";
-import { suggestFiles } from "./services/file-selector";
+import { measureMapTokens } from "./services/file-selector";
 import {
-  suggestFilesGitNexus,
   suggestFilesGitNexusOnly,
   suggestFilesGitNexusJev,
 } from "./services/gitnexus-selector";
@@ -247,38 +246,30 @@ export function registerIpcHandlers(): void {
           typeof typed?.instruction === "string" ? typed.instruction : "",
         dryRun: typed?.dryRun,
       };
-      // A dry run only measures the full-skeleton token count for the
-      // "this map is huge" warning. That number is produced by the current
-      // method's map builder, regardless of which pipeline the user picked.
+      // A dry run only measures the full-skeleton token count, which the
+      // Prompt tab shows in its footer as "map tokens". Nothing is
+      // selected and no provider is contacted.
       if (normalised.dryRun) {
-        return suggestFiles(normalised, settings.provider ?? "deepseek");
+        return measureMapTokens(normalised);
       }
-      const method = settings.suggestMethod ?? "current";
-      // The no-LLM variant never calls a provider, so it does not require
-      // an API key. Falling through to the provider check below would
-      // refuse the request for a user who has not configured one — which
-      // is exactly the user most likely to want an offline method.
+      const method = settings.suggestMethod ?? "gitnexus-only";
       if (method === "gitnexus-only") {
+        // Purely local. The provider string on the result is only a
+        // display field and does not imply an API call was made.
         return suggestFilesGitNexusOnly(
           normalised,
           settings.provider ?? "deepseek",
         );
       }
-      // The Jev variant talks to TypeSafe, not to a chat provider, so the
-      // chat-provider check below does not apply. The selector reads the
-      // TypeSafe key itself and raises a targeted error if it is missing.
       if (method === "gitnexus-jev") {
+        // Talks to TypeSafe, not to a chat provider. The selector reads
+        // the TypeSafe key itself and raises a targeted error if missing.
         return suggestFilesGitNexusJev(normalised);
       }
-      if (!settings.provider) {
-        throw new Error(
-          "No AI provider selected. Choose one in the Settings tab.",
-        );
-      }
-      if (method === "gitnexus") {
-        return suggestFilesGitNexus(normalised, settings.provider);
-      }
-      return suggestFiles(normalised, settings.provider);
+      // Unreachable given the `SuggestMethod` union, but keeping the
+      // exhaustive check here means a future addition to the union fails
+      // loudly rather than silently falling through to a default.
+      throw new Error(`Unknown suggestion method: ${String(method)}`);
     },
   );
 

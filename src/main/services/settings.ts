@@ -22,9 +22,8 @@ interface StoredShape {
   encryptedKeys: Partial<Record<AiProviderId, string>>
   modelByProvider: Partial<Record<AiProviderId, string>>
   /**
-   * Which file-suggestion pipeline the UI should run. Defaults to `current`
-   * so an existing install keeps behaving exactly as it did before this
-   * field existed.
+   * Which file-suggestion pipeline the UI should run. Defaults to
+   * `gitnexus-only`, the local-recall method that needs no provider call.
    */
   suggestMethod: SuggestMethod
 }
@@ -33,7 +32,7 @@ const EMPTY: StoredShape = {
   provider: null,
   encryptedKeys: {},
   modelByProvider: {},
-  suggestMethod: 'current',
+  suggestMethod: 'gitnexus-only',
 }
 
 function settingsPath(): string {
@@ -48,18 +47,17 @@ async function readStored(): Promise<StoredShape> {
       provider: parsed.provider ?? null,
       encryptedKeys: parsed.encryptedKeys ?? {},
       modelByProvider: parsed.modelByProvider ?? {},
-      // An older settings file has no `suggestMethod`; fall back to the
-      // default rather than leaving it undefined. Anything other than a
-      // known variant is coerced to `current` so a hand-edited settings
-      // file cannot put the app into an unrecognised state.
+      // An older settings file may carry a method that no longer exists —
+      // `current` and `gitnexus` were retired when the app moved to the
+      // local-first pipeline. Both migrate to `gitnexus-only`, the closest
+      // surviving behaviour: local recall, no provider call, deterministic
+      // result. Anything unrecognised falls back to the same default so a
+      // hand-edited settings file cannot put the app into an unrecognised
+      // state.
       suggestMethod:
-        parsed.suggestMethod === 'gitnexus'
-          ? 'gitnexus'
-          : parsed.suggestMethod === 'gitnexus-only'
-            ? 'gitnexus-only'
-            : parsed.suggestMethod === 'gitnexus-jev'
-              ? 'gitnexus-jev'
-              : 'current',
+        parsed.suggestMethod === 'gitnexus-jev'
+          ? 'gitnexus-jev'
+          : 'gitnexus-only',
     }
   } catch {
     return { ...EMPTY }

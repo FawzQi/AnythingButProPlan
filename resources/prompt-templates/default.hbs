@@ -22,15 +22,21 @@ Reply using exactly the three sections below, in this order, and nothing else.
 
 ### Section 1 — Files
 
-One entry per file that needs to change. **New** files and **existing** files use different shapes.
+One entry per file that needs to change. **Prefer the full-file markdown form.** Emit each file as a `File: <path>` header followed by a fenced code block containing that file's complete contents, with the language tag shown in the context above.
 
-#### New file — emit the whole file
+Change only what the input instruction describes. Do not refactor, rename, reorganize, or "improve" code that is not part of the change. A diff line the reviewer cannot trace back to a specific part of the input instruction is out of scope — leave it alone.
+
+#### Preferred form — full file in a markdown fence
 
 - A line reading `File: <path>` holding the project-relative path.
 - A fenced code block containing that file's **complete** contents.
 - Use the same language tag as shown in the context above.
 
-#### Existing file — emit SEARCH/REPLACE patches
+This is the default. Use it for new files, for rewrites, and for any file where the change touches more than a handful of lines. The full-file form is unambiguous — the applier writes the fence body to disk verbatim — and it does not depend on the model having reproduced an exact substring.
+
+#### Fallback form — SEARCH/REPLACE for surgical edits
+
+Use the patch form **only** when the change is genuinely small relative to the file — a one-line rename, a constant change, a single import — and the exact surrounding text is visible verbatim in the context above. For anything larger, fall back to the full-file form.
 
 - A line reading `File: <path>` holding the project-relative path.
 - One or more SEARCH/REPLACE pairs, in the form:
@@ -43,12 +49,12 @@ One entry per file that needs to change. **New** files and **existing** files us
   >>>>>>> REPLACE
   ```
 
-Rules:
+#### Rules for both forms
+
 - A file that does not yet exist **must** be emitted as a full fenced block, never a patch.
-- An existing file **should** be emitted as one or more SEARCH/REPLACE pairs whenever the change is small relative to the file.
+- **Prefer the full-file form whenever there is any doubt.** A full file that is slightly larger than necessary is always correct; a patch that fails to match is always broken.
 - The SEARCH block must be an **exact substring** of the file as shown in the context above, including all whitespace, indentation, and line endings. Do not re-indent, re-wrap, reorder, or "clean up" the quoted region. Copy it verbatim.
 - The SEARCH block must be unambiguous — quote enough surrounding context that the substring appears exactly once in the file.
-- If a change touches more than roughly half of an existing file, emit the whole file as a full fenced block instead of a large patch.
 - You may emit multiple SEARCH/REPLACE pairs under a single `File:` header; they are applied in order.
 - Do not add prose between file entries.
 - If a file is unchanged, do not include it.
@@ -75,5 +81,6 @@ If there are no debug commands, write `## Debug` followed by the single word `No
 
 - No conversational text before `File:` entries, between them, or after `## Debug`.
 - The `## Explanation` and `## Debug` headings are **mandatory** — always emit both, even when their content is `None`.
-- Never put a `File:` line inside the Explanation or Debug sections.
+- Never put a `File:` line inside the Explanation or Debug section.
+
 

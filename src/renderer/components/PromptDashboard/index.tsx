@@ -10,13 +10,6 @@ import { AiSettingsPanel } from './AiSettingsPanel'
 
 const TOKEN_WARNING_THRESHOLD = 100_000
 
-/**
- * Threshold above which the current (full-skeleton) suggestion method is
- * likely to be slow, expensive, or rejected outright. Matches the store's
- * confirm-dialog threshold so the persistent banner and the prompt agree.
- */
-const SUGGEST_MAP_WARNING_THRESHOLD = 50_000
-
 function TabButton({
   active,
   onClick,
@@ -94,28 +87,6 @@ function PromptTab(): ReactElement {
         </div>
       ) : null}
 
-      {(aiSettings?.suggestMethod ?? 'current') === 'current' &&
-      mapTokenCount !== null &&
-      mapTokenCount > SUGGEST_MAP_WARNING_THRESHOLD ? (
-        <div className="p-2">
-          <Banner tone="warn">
-            The full-skeleton map for this project is ~
-            {mapTokenCount.toLocaleString()} tokens, above the{' '}
-            {SUGGEST_MAP_WARNING_THRESHOLD.toLocaleString()}-token guidance for
-            the current suggestion method. “Suggest files” will send the whole
-            map in one call. Switch to the GitNexus method in{' '}
-            <button
-              type="button"
-              className="text-sky-400 underline hover:text-sky-300"
-              onClick={() => setEditorTab('settings')}
-            >
-              Settings
-            </button>{' '}
-            to search locally first and send only a targeted skeleton.
-          </Banner>
-        </div>
-      ) : null}
-
       {unreadable.length > 0 ? (
         <div className="p-2">
           <Banner tone="warn">
@@ -168,7 +139,7 @@ function PromptTab(): ReactElement {
             htmlFor="custom-prompt"
             className="block text-xs font-medium text-slate-400"
           >
-            Additional instructions
+            Input instruction
           </label>
           <Button
             variant="ghost"
@@ -176,13 +147,9 @@ function PromptTab(): ReactElement {
             onClick={() => void suggestFiles()}
             disabled={aiSuggesting || customPrompt.trim() === ''}
             title={
-              aiSettings?.suggestMethod === 'gitnexus-only'
-                ? 'Search locally with GitNexus + BM25 — no AI call'
-                : aiSettings?.suggestMethod === 'gitnexus-jev'
-                  ? 'Search locally, then rank with Jev (TypeSafe key)'
-                  : aiSettings?.provider
-                    ? `Ask ${aiSettings.provider} to pick the relevant files`
-                    : 'Configure an AI provider in the Settings tab first'
+              aiSettings?.suggestMethod === 'gitnexus-jev'
+                ? 'Search locally, then rank with Jev (TypeSafe key)'
+                : 'Search locally with GitNexus + BM25 — no AI call'
             }
           >
             {aiSuggesting ? 'Thinking…' : '✨ Suggest files'}
@@ -192,26 +159,11 @@ function PromptTab(): ReactElement {
           id="custom-prompt"
           value={customPrompt}
           onChange={(event) => setCustomPrompt(event.target.value)}
-          placeholder="Describe the change you want (e.g. 'add CSV export to the reports page'). Use ✨ Suggest files to have an AI pick the relevant files. The text is also appended to the end of the prompt when you copy or save."
+          placeholder="Describe the change you want (e.g. 'add CSV export to the reports page'). Use ✨ Suggest files to have an AI pick the relevant files. The text is inserted into the prompt just before the output instructions when you copy or save."
           spellCheck={false}
           rows={3}
           className="w-full resize-y rounded border border-[#2c3038] bg-[#12141a] p-2 text-xs text-slate-200 outline-none focus:border-sky-600"
         />
-        {aiSettings &&
-        aiSettings.suggestMethod !== 'gitnexus-only' &&
-        aiSettings.suggestMethod !== 'gitnexus-jev' &&
-        !aiSettings.provider ? (
-          <p className="mt-1 text-[11px] text-slate-500">
-            No AI provider configured.{' '}
-            <button
-              type="button"
-              className="text-sky-400 hover:text-sky-300"
-              onClick={() => setEditorTab('settings')}
-            >
-              Open Settings
-            </button>
-          </p>
-        ) : null}
         {aiSettings?.suggestMethod === 'gitnexus-jev' &&
         !aiSettings.hasApiKey['typesafe'] ? (
           <p className="mt-1 text-[11px] text-slate-500">
