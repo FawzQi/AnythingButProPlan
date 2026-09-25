@@ -49,6 +49,20 @@ Use the patch form **only** when the change is genuinely small relative to the f
   >>>>>>> REPLACE
   ```
 
+#### Delete form — a `Delete: <path>` line
+
+To remove a file, emit a line reading `Delete: <path>` holding the project-relative path. No fenced code block follows a delete directive — the line itself is the whole instruction.
+
+```
+Delete: src/legacy/old-helper.ts
+```
+
+The `Delete:` line must sit in the prose between file entries, **not inside a fenced code block**. A `Delete:` line inside a code body is treated as ordinary file content and is never executed as a directive, so a migration script or ORM model that happens to contain the text `Delete: something` is safe.
+
+A delete directive may appear anywhere among the `File:` entries, in any order — deletes and edits to other files can be freely interleaved in the same response. A response that contains only delete directives is valid.
+
+Paths use the same project-relative POSIX form as `File:` headers (`src/app.ts`, not `./src/app.ts` and not an absolute path). A path that does not exist on disk is a no-op reported as `not-found`; it is not an error.
+
 #### Rules for both forms
 
 - A file that does not yet exist **must** be emitted as a full fenced block, never a patch.
@@ -56,6 +70,7 @@ Use the patch form **only** when the change is genuinely small relative to the f
 - The SEARCH block must be an **exact substring** of the file as shown in the context above, including all whitespace, indentation, and line endings. Do not re-indent, re-wrap, reorder, or "clean up" the quoted region. Copy it verbatim.
 - The SEARCH block must be unambiguous — quote enough surrounding context that the substring appears exactly once in the file.
 - You may emit multiple SEARCH/REPLACE pairs under a single `File:` header; they are applied in order.
+- You may emit any number of `Delete: <path>` lines alongside `File:` entries.
 - Do not add prose between file entries.
 - If a file is unchanged, do not include it.
 
@@ -82,5 +97,4 @@ If there are no debug commands, write `## Debug` followed by the single word `No
 - No conversational text before `File:` entries, between them, or after `## Debug`.
 - The `## Explanation` and `## Debug` headings are **mandatory** — always emit both, even when their content is `None`.
 - Never put a `File:` line inside the Explanation or Debug section.
-
-
+- A `Delete:` directive is a line of prose, never a fenced block, and never appears inside the Explanation or Debug section.
