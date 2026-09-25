@@ -29,24 +29,33 @@ function toParsedFile(block: CodeBlock, path: string | null, source: ParsedFile[
 }
 
 /**
- * The heading that starts the trailing explanation section. The output
- * contract guarantees every `File:` entry comes first and the Explanation /
- * Debug sections come last, so anything from this heading onward is prose
- * and illustrative commands — never a file change.
+ * The headings that start the trailing prose sections. The output contract
+ * guarantees every `File:` entry comes first and the Explanation / Debug
+ * sections come last, so anything from either heading onward is prose and
+ * illustrative commands — never a file change.
+ *
+ * Both headings are matched, not just Explanation, because a non-conforming
+ * response can omit Explanation but still include Debug. Slicing at
+ * Explanation alone would then leave the Debug body in the scan, and any
+ * code fence there with a `File:`-shaped line above it would be mistaken
+ * for a real file entry — the exact failure mode where a shell command or
+ * example snippet is written to disk because it happens to sit under a path.
  */
-const EXPLANATION_HEADING = /^##[ \t]+Explanation[ \t]*\r?$/m
+const TERMINAL_HEADING = /^##[ \t]+(?:Explanation|Debug)[ \t]*\r?$/m
 
 /**
- * Return only the part of the response that can contain file entries. When
- * the Explanation heading is present, the response is sliced at that point:
+ * Return only the part of the response that can contain file entries. When a
+ * terminal heading is present, the response is sliced at the first one:
  * every code fence below it is illustrative (bash commands, examples) and
- * would otherwise be reported as a "skipped" block, which is misleading.
+ * would otherwise be reported as a "skipped" block — or worse, picked up as
+ * a file change if it happens to carry a path-like header.
  *
- * When the heading is absent — e.g. a truncated or non-conforming response —
- * the whole string is returned untouched.
+ * When neither heading is present — e.g. a truncated or non-conforming
+ * response — the whole string is returned untouched, preserving the
+ * existing degraded-mode behavior.
  */
 function filesSection(raw: string): string {
-  const match = EXPLANATION_HEADING.exec(raw)
+  const match = TERMINAL_HEADING.exec(raw)
   return match ? raw.slice(0, match.index) : raw
 }
 
