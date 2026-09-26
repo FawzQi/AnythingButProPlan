@@ -48,6 +48,8 @@ function PromptTab(): ReactElement {
   const mapTokenCount = useAppStore((state) => state.mapTokenCount)
   const suggestFiles = useAppStore((state) => state.suggestFiles)
   const setEditorTab = useAppStore((state) => state.setEditorTab)
+  const webChatSending = useAppStore((state) => state.webChatSending)
+  const sendToWebChat = useAppStore((state) => state.sendToWebChat)
 
   // What the user actually sees and copies: the built base prompt with the
   // current additional instructions appended. Recomputing here (rather than at
@@ -74,6 +76,19 @@ function PromptTab(): ReactElement {
   }, [effectivePrompt, customPrompt, prompt])
 
   const displayTokens = customTokens ?? tokenCount
+
+  const webChatLabel =
+    aiSettings?.webChatTarget === 'chatgpt'
+      ? 'ChatGPT'
+      : aiSettings?.webChatTarget === 'claude'
+        ? 'Claude'
+        : aiSettings?.webChatTarget === 'gemini'
+          ? 'Gemini'
+          : aiSettings?.webChatTarget === 'kimi'
+            ? 'Kimi'
+            : aiSettings?.webChatTarget === 'qwen'
+              ? 'Qwen Chat'
+              : 'DeepSeek'
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
@@ -102,6 +117,16 @@ function PromptTab(): ReactElement {
             This prompt includes {sensitiveFiles.length} file(s) that likely
             contain secrets: {sensitiveFiles.join(', ')}. Deselect them in the
             project tree if they should not be sent to the AI.
+          </Banner>
+        </div>
+      ) : null}
+
+      {webChatSending ? (
+        <div className="p-2">
+          <Banner tone="info">
+            Waiting for {webChatLabel} to finish answering. A browser window
+            is open in the background — leave it alone until the reply
+            appears here.
           </Banner>
         </div>
       ) : null}
@@ -159,7 +184,7 @@ function PromptTab(): ReactElement {
           id="custom-prompt"
           value={customPrompt}
           onChange={(event) => setCustomPrompt(event.target.value)}
-          placeholder="Describe the change you want (e.g. 'add CSV export to the reports page'). Use ✨ Suggest files to have an AI pick the relevant files. The text is inserted into the prompt just before the output instructions when you copy or save."
+          placeholder="Describe the change you want (e.g. 'add CSV export to the reports page'). Use ✨ Suggest files to have an AI pick the relevant files. The text is inserted into the prompt just before the output instructions when you copy, save, or send it to a web chat."
           spellCheck={false}
           rows={3}
           className="w-full resize-y rounded border border-[#2c3038] bg-[#12141a] p-2 text-xs text-slate-200 outline-none focus:border-sky-600"
@@ -242,8 +267,7 @@ function EditorTab(): ReactElement {
       <div className="flex h-full min-h-0 flex-1 items-center justify-center p-6 text-center">
         <p className="max-w-sm text-xs text-slate-500">
           Double-click a file in the project tree to open it here for reading
-          and editing. Saving writes it back to disk with a .bak backup of any
-          prior version.
+          and editing. Saving writes it back to disk.
         </p>
       </div>
     )
@@ -287,6 +311,8 @@ export function PromptDashboard(): ReactElement {
   const buildPrompt = useAppStore((state) => state.buildPrompt)
   const copyPrompt = useAppStore((state) => state.copyPrompt)
   const savePrompt = useAppStore((state) => state.savePrompt)
+  const webChatSending = useAppStore((state) => state.webChatSending)
+  const sendToWebChat = useAppStore((state) => state.sendToWebChat)
 
   const editorTab = useAppStore((state) => state.editorTab)
   const setEditorTab = useAppStore((state) => state.setEditorTab)
@@ -331,6 +357,14 @@ export function PromptDashboard(): ReactElement {
         </Button>
         <Button onClick={() => void savePrompt()} disabled={prompt === ''}>
           Save
+        </Button>
+        <Button
+          variant="primary"
+          onClick={() => void sendToWebChat()}
+          disabled={prompt === '' || webChatSending}
+          title="Open the configured chat site, submit the prompt, and pull the reply into the AI Response panel"
+        >
+          {webChatSending ? 'Waiting…' : 'Send to web chat'}
         </Button>
       </>
     ) : editorTab === 'editor' ? (

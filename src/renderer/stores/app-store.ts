@@ -10,6 +10,8 @@ import type {
   GitStatus,
   ParsedFile,
   ParseResult,
+  WebChatTargetId,
+  WebChatTargetInfo,
 } from "@shared/types";
 import {
   collectSelectedPaths,
@@ -88,6 +90,8 @@ interface AppState {
    * stored per provider (the key itself never reaches the renderer).
    */
   aiProviders: AiProviderInfo[];
+  /** Catalogue of web chat sites the "Send to web chat" button can drive. */
+  webChatTargets: WebChatTargetInfo[];
   aiSettings: AiSettings | null;
   aiSettingsLoading: boolean;
   /**
@@ -105,6 +109,13 @@ interface AppState {
   /** Token count of the generated codebase map/skeleton used for suggest files. */
   mapTokenCount: number | null;
 
+  /**
+   * True while a web chat send is in flight. The whole round-trip — typing,
+   * submitting, waiting for the reply to finish streaming, scraping — runs
+   * inside the main process, so the renderer only sees the two edges.
+   */
+  webChatSending: boolean;
+
   notice: string | null;
   error: string | null;
 
@@ -113,6 +124,8 @@ interface AppState {
   loadAiModels: (provider: AiProviderId) => Promise<void>;
   suggestFiles: () => Promise<void>;
   calculateMapTokens: () => Promise<void>;
+  sendToWebChat: () => Promise<void>;
+  openWebChat: () => Promise<void>;
 
   openProject: () => Promise<void>;
   refreshProject: () => Promise<void>;
@@ -196,6 +209,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   gitCommitMessage: "",
 
   aiProviders: [],
+  webChatTargets: [],
   aiSettings: null,
   aiSettingsLoading: false,
   aiModelsByProvider: {},
@@ -203,6 +217,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   aiSuggesting: false,
   aiLastSuggestion: null,
   mapTokenCount: null,
+
+  webChatSending: false,
 
   notice: null,
   error: null,
@@ -213,6 +229,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const result = await window.LARPGent.aiGetSettings();
       set({
         aiProviders: result.providers,
+        webChatTargets: result.webChatTargets,
         aiSettings: result.settings,
         aiSettingsLoading: false,
       });
@@ -277,8 +294,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   suggestFiles: async () => {
-    const { projectRoot, tree, customPrompt, aiSettings, mapTokenCount } =
-      get();
+    const { projectRoot, tree, customPrompt, aiSettings } = get();
     if (!projectRoot || !tree) {
       set({ error: "Open a project before asking the AI to suggest files." });
       return;
@@ -289,30 +305,6 @@ export const useAppStore = create<AppState>((set, get) => ({
           "Type a description of the change in Additional instructions first.",
       });
       return;
-    }
-    // Warn before committing to a request the provider will very likely
-    // reject. The current method sends the whole skeleton in one call, so a
-    // huge map means a slow request, a big bill on paid tiers, and quite
-    // possibly a context-length error the user has to debug. The GitNexus
-    // method never builds the full map, so the warning does not apply.
-    const usingCurrent =
-      (aiSettings?.suggestMethod ?? "current") === "current";
-    if (usingCurrent && (mapTokenCount ?? 0) > 50_000) {
-      const confirmed = await window.LARPGent.confirmDialog({
-        message: "Send a very large suggestion prompt?",
-        detail:
-          `The full-skeleton map for this project is about ` +
-          `${(mapTokenCount ?? 0).toLocaleString()} tokens, above the ` +
-          `50,000-token guidance for the current suggestion method. Most ` +
-          `providers will still accept it, but expect a slow response and a ` +
-          `higher bill.\n\n` +
-          `Switch to the GitNexus suggestion method in Settings to search ` +
-          `locally first and send only a targeted skeleton, or deselect ` +
-          `files in the project tree before asking for suggestions.`,
-        confirmLabel: "Send anyway",
-        tone: "warning",
-      });
-      if (!confirmed) return;
     }
     const filePaths: string[] = [];
     const walk = (node: FileNode): void => {
@@ -370,6 +362,44 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
     } catch (error) {
       set({ aiSuggesting: false, error: message(error) });
+    }
+  },
+
+  sendToWebChat: async () => {
+    const { prompt, customPrompt, aiSettings } = get();
+    const text = insertCustomPrompt(prompt, customPrompt);
+    if (text === "") {
+      set({ error: "Generate a prompt before sending it to a web chat." });
+      return;
+    }
+    const target: WebChatTargetId = aiSettings?.webChatTarget ?? "deepseek";
+    try {
+      set({ webChatSending: true, error: null, notice: null });
+      const result = await window.LARPGent.webChatSend({ target, prompt: text });
+      if (!result.ok) {
+        set({
+          webChatSending: false,
+          error: result.error ?? "The web chat did not return a response.",
+        });
+        return;
+      }
+      set({ webChatSending: false });
+      // The scraped text is fed through the same parser the paste path uses,
+      // so the Response panel behaves identically no matter where the reply
+      // came from.
+      await get().setResponse(result.text ?? "");
+      set({ notice: "Response received from the web chat." });
+    } catch (error) {
+      set({ webChatSending: false, error: message(error) });
+    }
+  },
+
+  openWebChat: async () => {
+    const target = get().aiSettings?.webChatTarget ?? "deepseek";
+    try {
+      await window.LARPGent.webChatOpen(target);
+    } catch (error) {
+      set({ error: message(error) });
     }
   },
 

@@ -2,11 +2,11 @@ import { contextBridge, ipcRenderer } from "electron";
 import { IpcChannel } from "@shared/ipc-channels";
 import type {
   AiProviderId,
+  AiProviderInfo,
   AiSettings,
   AiSettingsSaveRequest,
   AiSuggestion,
   AiSuggestRequest,
-  AiProviderInfo,
   ApplyRequest,
   ApplyResult,
   ConfirmDialogRequest,
@@ -28,6 +28,10 @@ import type {
   PromptBuildRequest,
   PromptBuildResult,
   ScanResult,
+  WebChatSendRequest,
+  WebChatSendResult,
+  WebChatTargetId,
+  WebChatTargetInfo,
   WriteFileRequest,
   WriteFileResult,
 } from "@shared/types";
@@ -87,14 +91,23 @@ const api = {
     ipcRenderer.invoke(IpcChannel.CopyText, text),
   openTerminal: (root: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.OpenTerminal, root),
-  aiGetSettings: (): Promise<{ settings: AiSettings; providers: AiProviderInfo[] }> =>
-    ipcRenderer.invoke(IpcChannel.AiSettingsGet),
+  aiGetSettings: (): Promise<{
+    settings: AiSettings;
+    providers: AiProviderInfo[];
+    webChatTargets: WebChatTargetInfo[];
+  }> => ipcRenderer.invoke(IpcChannel.AiSettingsGet),
   aiSaveSettings: (request: AiSettingsSaveRequest): Promise<AiSettings> =>
     ipcRenderer.invoke(IpcChannel.AiSettingsSave, request),
   aiListModels: (provider: AiProviderId): Promise<string[]> =>
     ipcRenderer.invoke(IpcChannel.AiListModels, provider),
   aiSuggestFiles: (request: AiSuggestRequest): Promise<AiSuggestion> =>
     ipcRenderer.invoke(IpcChannel.AiSuggestFiles, request),
+  webChatSend: (request: WebChatSendRequest): Promise<WebChatSendResult> =>
+    ipcRenderer.invoke(IpcChannel.WebChatSend, request),
+  webChatOpen: (target: WebChatTargetId): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.WebChatOpen, target),
+  webChatCancel: (): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.WebChatCancel),
 };
 
 export type LARPGentApi = typeof api;

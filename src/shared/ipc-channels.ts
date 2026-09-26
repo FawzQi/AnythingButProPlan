@@ -31,6 +31,9 @@ export const IpcChannel = {
   AiSettingsSave: 'ai:settings-save',
   AiListModels: 'ai:list-models',
   AiSuggestFiles: 'ai:suggest-files',
+  WebChatSend: 'webchat:send',
+  WebChatOpen: 'webchat:open',
+  WebChatCancel: 'webchat:cancel',
 } as const
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel]

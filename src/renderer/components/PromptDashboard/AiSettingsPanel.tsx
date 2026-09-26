@@ -10,6 +10,10 @@ import { Banner, Button } from "../../lib/ui";
  * through IPC, stored encrypted in `userData`, and never read back into the
  * renderer — the field below is write-only by design.
  *
+ * The panel also hosts the "Send to web chat" target picker. That path does
+ * not use an API key at all: it drives the site's own web UI in a dedicated
+ * Electron window, reusing whatever session the user is signed into.
+ *
  * The panel always renders something. A missing component or a silently
  * failing IPC call were both producing a blank tab because the early
  * `return` statements produced no visible output on some paths; every
@@ -17,10 +21,12 @@ import { Banner, Button } from "../../lib/ui";
  */
 export function AiSettingsPanel(): ReactElement {
   const providers = useAppStore((state) => state.aiProviders);
+  const webChatTargets = useAppStore((state) => state.webChatTargets);
   const settings = useAppStore((state) => state.aiSettings);
   const loading = useAppStore((state) => state.aiSettingsLoading);
   const load = useAppStore((state) => state.loadAiSettings);
   const save = useAppStore((state) => state.saveAiSettings);
+  const openWebChat = useAppStore((state) => state.openWebChat);
 
   const [keyDraft, setKeyDraft] = useState("");
 
@@ -60,15 +66,20 @@ export function AiSettingsPanel(): ReactElement {
     ? settings.modelByProvider[selected] ?? activeProvider?.models[0] ?? ""
     : "";
 
+  const activeWebChat = webChatTargets.find(
+    (t) => t.id === settings.webChatTarget,
+  ) ?? null;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-auto p-3">
       <p className="mb-3 max-w-2xl text-xs text-slate-400">
-        Pick a provider and paste an API key. The key is stored encrypted in
-        your OS keychain and is only used from the main process — it never
-        reaches the web view.
+        Pick a provider and paste an API key for the chat-completion path. The
+        key is stored encrypted in your OS keychain and is only used from the
+        main process — it never reaches the web view.
         <strong> GitNexus only</strong> runs entirely offline and needs no
         key; <strong>GitNexus + Jev</strong> uses the TypeSafe key and does
-        not contact a chat provider.
+        not contact a chat provider. The <strong>web chat</strong> path below
+        uses neither — it drives the chat site&rsquo;s own UI.
       </p>
 
       {providers.length === 0 ? (
@@ -80,6 +91,59 @@ export function AiSettingsPanel(): ReactElement {
           </Banner>
         </div>
       ) : null}
+
+      <div className="mb-6">
+        <label className="mb-1 block text-xs font-medium text-slate-400">
+          Web chat target
+        </label>
+        <p className="mb-2 max-w-2xl text-[11px] text-slate-500">
+          Where <strong>Send to web chat</strong> on the Prompt tab goes. The
+          app opens the site in a dedicated window, types the prompt into its
+          composer, submits it, and scrapes the reply back into the AI
+          Response panel. No API key and no per-token billing — the site is
+          the model. Sign in once and the session is kept until you close
+          that window. Each site&rsquo;s markup changes on its own schedule;
+          if a send ever fails with &ldquo;could not find the chat
+          input&rdquo;, open the window and finish signing in first.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {webChatTargets.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => void save({ webChatTarget: t.id })}
+              className={`rounded border px-3 py-1.5 text-xs font-medium transition ${
+                settings.webChatTarget === t.id
+                  ? "border-sky-500 bg-sky-950/40 text-sky-100"
+                  : "border-[#2c3038] text-slate-300 hover:border-slate-500"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2 flex items-center gap-3">
+          <Button
+            variant="ghost"
+            className="px-2 py-0.5 text-xs"
+            onClick={() => void openWebChat()}
+            title="Open the chat window so you can sign in before the first send"
+          >
+            Open chat window
+          </Button>
+          {activeWebChat ? (
+            <a
+              href={activeWebChat.url}
+              target="_blank"
+              rel="noreferrer"
+              className="truncate text-[11px] text-slate-500 hover:text-slate-300"
+              title={activeWebChat.url}
+            >
+              {activeWebChat.url}
+            </a>
+          ) : null}
+        </div>
+      </div>
 
       <div className="mb-4">
         <label className="mb-1 block text-xs font-medium text-slate-400">
@@ -130,8 +194,7 @@ export function AiSettingsPanel(): ReactElement {
                 each surviving candidate is scored by Jev on a 0–3
                 relevance scale. Score 3 with ≥85% confidence is included;
                 score 2 is flagged for your review; 0–1 is dropped. Uses
-                the{" "}
-                <strong>TypeSafe</strong> API key, not a chat provider,
+                the <strong>TypeSafe</strong> API key, not a chat provider,
                 and every judgment comes back with a calibrated
                 probability you can act on. Requires the{" "}
                 <code className="rounded bg-[#2a2f38] px-1">gitnexus</code>{" "}

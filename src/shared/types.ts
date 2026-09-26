@@ -72,8 +72,8 @@ export interface ParsedFile {
   patches?: PatchBlock[]
   /**
    * When true, this entry is a delete directive (`Delete: <path>` in the
-   * response): the applier renames the file to a `.bak` sibling rather than
-   * writing `content` or applying `patches`.
+   * response): the applier removes the file rather than writing `content` or
+   * applying `patches`.
    */
   delete?: boolean
 }
@@ -97,8 +97,7 @@ export interface ApplyFileInput {
   content: string
   patches?: PatchBlock[]
   /**
-   * When true, the applier deletes `path` (renaming it to a `.bak` sibling so
-   * the change is reversible) instead of writing any content.
+   * When true, the applier deletes `path` instead of writing any content.
    */
   delete?: boolean
 }
@@ -366,10 +365,15 @@ export interface AiSettings {
   /** True when a key has been saved for this provider. */
   hasApiKey: Partial<Record<AiProviderId, boolean>>
   /**
-   * Which file-suggestion pipeline the "Suggest files" button runs. Defaults
-   * to `current` so an existing install keeps its behaviour after upgrade.
+   * Which file-suggestion pipeline the "Suggest files" button runs.
    */
   suggestMethod: SuggestMethod
+  /**
+   * Which web chat site the "Send to web chat" button targets. The site is
+   * driven through its own web UI in a dedicated window — no API key, no
+   * per-token billing.
+   */
+  webChatTarget: WebChatTargetId
 }
 
 export interface AiSettingsSaveRequest {
@@ -380,6 +384,8 @@ export interface AiSettingsSaveRequest {
   apiKey?: { provider: AiProviderId; key: string }
   /** Switch the file-suggestion pipeline. */
   suggestMethod?: SuggestMethod
+  /** Switch the web chat target used by "Send to web chat". */
+  webChatTarget?: WebChatTargetId
 }
 
 export interface AiSuggestRequest {
@@ -460,4 +466,46 @@ export interface AiSuggestion {
   jevBatchCount?: number
   /** Input tokens billed by Jev. Only present for `gitnexus-jev`. */
   jevTokens?: number
+}
+
+/* ------------------------------------------------------------------------ *
+ * Web chat bridge
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Which chat site "Send to web chat" drives. Each target is a full web UI
+ * opened in its own Electron window: the app types the prompt into the
+ * site's composer, submits it, waits for the reply to finish streaming, and
+ * scrapes the assistant's text back into the AI Response panel.
+ *
+ * This path exists so the app can be used without an API key. The trade-off
+ * is that it depends on each site's DOM, which changes without notice.
+ */
+export type WebChatTargetId =
+  | 'deepseek'
+  | 'chatgpt'
+  | 'claude'
+  | 'gemini'
+  | 'kimi'
+  | 'qwen'
+
+/** Display metadata for the web chat target picker in Settings. */
+export interface WebChatTargetInfo {
+  id: WebChatTargetId
+  label: string
+  /** The site's landing URL, shown as a hint in Settings. */
+  url: string
+}
+
+export interface WebChatSendRequest {
+  target: WebChatTargetId
+  prompt: string
+}
+
+export interface WebChatSendResult {
+  ok: boolean
+  /** The scraped assistant text. Present when `ok` is true. */
+  text?: string
+  /** User-readable failure reason. Present when `ok` is false. */
+  error?: string
 }

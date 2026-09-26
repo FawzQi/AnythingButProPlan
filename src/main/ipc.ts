@@ -29,6 +29,9 @@ import type {
   PromptBuildRequest,
   PromptBuildResult,
   ScanResult,
+  WebChatSendRequest,
+  WebChatSendResult,
+  WebChatTargetId,
   WriteFileRequest,
   WriteFileResult,
 } from "@shared/types";
@@ -60,12 +63,37 @@ import {
   suggestFilesGitNexusJev,
 } from "./services/gitnexus-selector";
 import { discoverModels, listProviders } from "./services/ai-providers";
+import {
+  cancelWebChat,
+  listWebChatTargets,
+  openWebChat,
+  sendToWebChat,
+} from "./services/web-chat";
 
 function requireString(value: unknown, label: string): string {
   if (typeof value !== "string" || value === "") {
     throw new Error(`Invalid ${label}: expected a non-empty string.`);
   }
   return value;
+}
+
+const WEB_CHAT_TARGET_IDS: readonly WebChatTargetId[] = [
+  "deepseek",
+  "chatgpt",
+  "claude",
+  "gemini",
+  "kimi",
+  "qwen",
+];
+
+function requireWebChatTarget(value: unknown): WebChatTargetId {
+  if (
+    typeof value !== "string" ||
+    !(WEB_CHAT_TARGET_IDS as readonly string[]).includes(value)
+  ) {
+    throw new Error(`Unknown web chat target: ${String(value)}`);
+  }
+  return value as WebChatTargetId;
 }
 
 /**
@@ -178,8 +206,16 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IpcChannel.AiSettingsGet,
-    async (): Promise<{ settings: AiSettings; providers: ReturnType<typeof listProviders> }> => {
-      return { settings: await getSettings(), providers: listProviders() };
+    async (): Promise<{
+      settings: AiSettings;
+      providers: ReturnType<typeof listProviders>;
+      webChatTargets: ReturnType<typeof listWebChatTargets>;
+    }> => {
+      return {
+        settings: await getSettings(),
+        providers: listProviders(),
+        webChatTargets: listWebChatTargets(),
+      };
     },
   );
 
@@ -203,6 +239,7 @@ export function registerIpcHandlers(): void {
         model: typed?.model,
         apiKey: typed?.apiKey,
         suggestMethod: typed?.suggestMethod,
+        webChatTarget: typed?.webChatTarget,
       });
     },
   );
@@ -436,6 +473,31 @@ export function registerIpcHandlers(): void {
       openTerminalAt(requireString(root, "root"));
     },
   );
+
+  /* ---------------------------------------------------------------------- *
+   * Web chat bridge
+   * ---------------------------------------------------------------------- */
+
+  ipcMain.handle(
+    IpcChannel.WebChatSend,
+    async (_event, request: unknown): Promise<WebChatSendResult> => {
+      const typed = request as WebChatSendRequest;
+      const target = requireWebChatTarget(typed?.target);
+      const prompt = requireString(typed?.prompt, "prompt");
+      return sendToWebChat(target, prompt);
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.WebChatOpen,
+    async (_event, target: unknown): Promise<void> => {
+      await openWebChat(requireWebChatTarget(target));
+    },
+  );
+
+  ipcMain.handle(IpcChannel.WebChatCancel, async (): Promise<void> => {
+    cancelWebChat();
+  });
 
   /* ---------------------------------------------------------------------- *
    * Git source control

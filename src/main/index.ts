@@ -2,6 +2,14 @@ import path from "node:path";
 import { app, BrowserWindow, shell } from "electron";
 import { registerIpcHandlers } from "./ipc";
 
+// Remove the `AutomationControlled` blink feature before Chromium starts.
+// Without this switch, `navigator.webdriver` reports true in every window
+// the app creates, and several chat sites refuse to serve an automated
+// session. Set here rather than inside the web-chat service because
+// Chromium reads its command-line switches during start-up, and
+// `whenReady` is already too late.
+app.commandLine.appendSwitch("disable-blink-features", "AutomationControlled");
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,

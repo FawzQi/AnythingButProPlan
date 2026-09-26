@@ -6,6 +6,7 @@ import type {
   AiSettings,
   AiSettingsSaveRequest,
   SuggestMethod,
+  WebChatTargetId,
 } from '@shared/types'
 
 /**
@@ -26,6 +27,8 @@ interface StoredShape {
    * `gitnexus-only`, the local-recall method that needs no provider call.
    */
   suggestMethod: SuggestMethod
+  /** Which chat site the "Send to web chat" button drives. */
+  webChatTarget: WebChatTargetId
 }
 
 const EMPTY: StoredShape = {
@@ -33,6 +36,23 @@ const EMPTY: StoredShape = {
   encryptedKeys: {},
   modelByProvider: {},
   suggestMethod: 'gitnexus-only',
+  webChatTarget: 'deepseek',
+}
+
+const WEB_CHAT_IDS: readonly WebChatTargetId[] = [
+  'deepseek',
+  'chatgpt',
+  'claude',
+  'gemini',
+  'kimi',
+  'qwen',
+]
+
+function asWebChatTarget(value: unknown): WebChatTargetId {
+  return typeof value === 'string' &&
+    (WEB_CHAT_IDS as readonly string[]).includes(value)
+    ? (value as WebChatTargetId)
+    : 'deepseek'
 }
 
 function settingsPath(): string {
@@ -58,6 +78,7 @@ async function readStored(): Promise<StoredShape> {
         parsed.suggestMethod === 'gitnexus-jev'
           ? 'gitnexus-jev'
           : 'gitnexus-only',
+      webChatTarget: asWebChatTarget(parsed.webChatTarget),
     }
   } catch {
     return { ...EMPTY }
@@ -104,6 +125,7 @@ export async function getSettings(): Promise<AiSettings> {
     modelByProvider: stored.modelByProvider,
     hasApiKey,
     suggestMethod: stored.suggestMethod,
+    webChatTarget: stored.webChatTarget,
   }
 }
 
@@ -116,6 +138,9 @@ export async function saveSettings(
   }
   if (request.suggestMethod !== undefined) {
     stored.suggestMethod = request.suggestMethod
+  }
+  if (request.webChatTarget !== undefined) {
+    stored.webChatTarget = request.webChatTarget
   }
   if (request.model) {
     stored.modelByProvider = {
