@@ -49,7 +49,6 @@ function PromptTab(): ReactElement {
   const suggestFiles = useAppStore((state) => state.suggestFiles)
   const setEditorTab = useAppStore((state) => state.setEditorTab)
   const webChatSending = useAppStore((state) => state.webChatSending)
-  const sendToWebChat = useAppStore((state) => state.sendToWebChat)
 
   // What the user actually sees and copies: the built base prompt with the
   // current additional instructions appended. Recomputing here (rather than at
@@ -126,7 +125,7 @@ function PromptTab(): ReactElement {
           <Banner tone="info">
             Waiting for {webChatLabel} to finish answering. A browser window
             is open in the background — leave it alone until the reply
-            appears here.
+            appears in the AI Response panel.
           </Banner>
         </div>
       ) : null}
@@ -134,10 +133,9 @@ function PromptTab(): ReactElement {
       <div className="min-h-0 flex-1">
         {prompt === '' ? (
           <p className="p-3 text-xs text-slate-500">
-            Generate a prompt to start. With a project open, only the files
-            selected in the tree are included; with no project open, the
-            prompt contains the output contract and your additional
-            instructions alone.
+            {customPrompt.trim() === ''
+              ? 'Generate a prompt to start. With a project open, only the files selected in the tree are included; with no project open, the prompt contains the output contract and your additional instructions alone.'
+              : 'No prompt generated. Type your instruction below and use "Send to web chat" to send it on its own, or click "Generate prompt" to include the selected files.'}
           </p>
         ) : (
           <Editor
@@ -184,7 +182,7 @@ function PromptTab(): ReactElement {
           id="custom-prompt"
           value={customPrompt}
           onChange={(event) => setCustomPrompt(event.target.value)}
-          placeholder="Describe the change you want (e.g. 'add CSV export to the reports page'). Use ✨ Suggest files to have an AI pick the relevant files. The text is inserted into the prompt just before the output instructions when you copy, save, or send it to a web chat."
+          placeholder="Describe the change you want (e.g. 'add CSV export to the reports page'). Use ✨ Suggest files to have an AI pick the relevant files. When no prompt has been generated, this instruction is sent to the web chat on its own."
           spellCheck={false}
           rows={3}
           className="w-full resize-y rounded border border-[#2c3038] bg-[#12141a] p-2 text-xs text-slate-200 outline-none focus:border-sky-600"
@@ -307,8 +305,10 @@ function EditorTab(): ReactElement {
 export function PromptDashboard(): ReactElement {
   const tree = useAppStore((state) => state.tree)
   const prompt = useAppStore((state) => state.prompt)
+  const customPrompt = useAppStore((state) => state.customPrompt)
   const building = useAppStore((state) => state.building)
   const buildPrompt = useAppStore((state) => state.buildPrompt)
+  const clearPrompt = useAppStore((state) => state.clearPrompt)
   const copyPrompt = useAppStore((state) => state.copyPrompt)
   const savePrompt = useAppStore((state) => state.savePrompt)
   const webChatSending = useAppStore((state) => state.webChatSending)
@@ -343,6 +343,13 @@ export function PromptDashboard(): ReactElement {
         gitStatus.conflicted.length
       : 0
 
+  // "Send to web chat" is enabled by either half of the request: a built
+  // prompt, or an instruction typed into the textarea. When the prompt is
+  // empty the instruction is sent on its own — see `sendToWebChat` in the
+  // store.
+  const canSendToWebChat =
+    !webChatSending && (prompt !== '' || customPrompt.trim() !== '')
+
   const headerActions: ReactNode =
     editorTab === 'prompt' ? (
       <>
@@ -351,6 +358,13 @@ export function PromptDashboard(): ReactElement {
         </span>
         <Button variant="primary" onClick={() => void buildPrompt()} disabled={building}>
           {building ? 'Building…' : 'Generate prompt'}
+        </Button>
+        <Button
+          onClick={clearPrompt}
+          disabled={prompt === ''}
+          title="Clear the generated prompt. The input instruction is kept, and can be sent to a web chat on its own."
+        >
+          Clear
         </Button>
         <Button onClick={() => void copyPrompt()} disabled={prompt === ''}>
           Copy
@@ -361,8 +375,12 @@ export function PromptDashboard(): ReactElement {
         <Button
           variant="primary"
           onClick={() => void sendToWebChat()}
-          disabled={prompt === '' || webChatSending}
-          title="Open the configured chat site, submit the prompt, and pull the reply into the AI Response panel"
+          disabled={!canSendToWebChat}
+          title={
+            prompt === ''
+              ? 'Send the input instruction to the configured chat site on its own, with no prompt and no file context'
+              : 'Send the generated prompt to the configured chat site and pull the reply into the AI Response panel'
+          }
         >
           {webChatSending ? 'Waiting…' : 'Send to web chat'}
         </Button>

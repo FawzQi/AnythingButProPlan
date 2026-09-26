@@ -40,6 +40,17 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
   }>({ forResult: null, values: {} });
   const existing = existence.forResult === parseResult ? existence.values : {};
 
+  // Mirror store-side changes into the textarea. Without this, the local
+  // `draft` — which `useState` reads exactly once — would keep its initial
+  // (usually empty) value, so a reply the web chat bridge drops into
+  // `rawResponse` would update the parsed file list below but never appear
+  // in the input box. The equality guard stops the update from firing when
+  // the change is our own debounced write, since at that point `draft` and
+  // `rawResponse` already match.
+  useEffect(() => {
+    setDraft((current) => (current === rawResponse ? current : rawResponse));
+  }, [rawResponse]);
+
   useDebouncedEffect(
     () => {
       if (draft !== rawResponse) void setResponse(draft);
@@ -136,7 +147,7 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder="Paste the AI response here."
+          placeholder="Paste the AI response here, or use Send to web chat on the Prompt tab to fill this in automatically."
           spellCheck={false}
           className="h-40 shrink-0 resize-y border-b border-[#2c3038] bg-[#12141a] p-3 font-mono text-xs text-slate-200 outline-none"
         />
@@ -226,7 +237,7 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
                         <td className="py-1.5">
                           {isDelete ? (
                             <span
-                              title="Delete directive — the file is renamed to a .bak sibling"
+                              title="Delete directive — the file is removed from disk"
                               className="rounded bg-red-900/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-red-300"
                             >
                               delete

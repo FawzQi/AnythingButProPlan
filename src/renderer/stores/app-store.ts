@@ -134,6 +134,7 @@ interface AppState {
   toggleExpanded: (id: string) => void;
   selectAll: (selected: boolean) => void;
   buildPrompt: () => Promise<void>;
+  clearPrompt: () => void;
   copyPrompt: () => Promise<void>;
   savePrompt: () => Promise<void>;
   setCustomPrompt: (value: string) => void;
@@ -367,9 +368,27 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   sendToWebChat: async () => {
     const { prompt, customPrompt, aiSettings } = get();
-    const text = insertCustomPrompt(prompt, customPrompt);
+    // Two valid send shapes:
+    //
+    //   1. A prompt has been generated. The input instruction is inserted
+    //      into it, exactly as Copy and Save do, so the site sees the whole
+    //      request — file bodies plus the output contract plus the ask.
+    //
+    //   2. No prompt exists (never generated, or cleared). The input
+    //      instruction goes on its own. This is the "use the web chat as a
+    //      general assistant" path: the user describes what they want and
+    //      the site answers, with no repo context and no output contract in
+    //      the way. Requiring a built prompt here would force the user to
+    //      select files just to send a one-line question.
+    const text =
+      prompt === ""
+        ? customPrompt.trim()
+        : insertCustomPrompt(prompt, customPrompt);
     if (text === "") {
-      set({ error: "Generate a prompt before sending it to a web chat." });
+      set({
+        error:
+          "Type an input instruction or generate a prompt before sending to a web chat.",
+      });
       return;
     }
     const target: WebChatTargetId = aiSettings?.webChatTarget ?? "deepseek";
@@ -386,7 +405,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ webChatSending: false });
       // The scraped text is fed through the same parser the paste path uses,
       // so the Response panel behaves identically no matter where the reply
-      // came from.
+      // came from. `setResponse` writes `rawResponse`, which the Response
+      // panel's textarea mirrors — the reply appears in the input box.
       await get().setResponse(result.text ?? "");
       set({ notice: "Response received from the web chat." });
     } catch (error) {
@@ -530,6 +550,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (error) {
       set({ building: false, error: message(error) });
     }
+  },
+
+  clearPrompt: () => {
+    // Reset only the generated prompt. The input instruction is deliberately
+    // left alone: clearing is how the user gets back to the
+    // instruction-only send path, not a way to wipe what they typed.
+    set({
+      prompt: "",
+      tokenCount: 0,
+      promptFileCount: 0,
+      unreadable: [],
+      sensitiveFiles: [],
+    });
   },
 
   copyPrompt: async () => {

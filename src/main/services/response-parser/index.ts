@@ -40,8 +40,37 @@ function toParsedFile(block: CodeBlock, path: string | null, source: ParsedFile[
  * code fence there with a `File:`-shaped line above it would be mistaken
  * for a real file entry — the exact failure mode where a shell command or
  * example snippet is written to disk because it happens to sit under a path.
+ *
+ * The keyword may sit anywhere in the heading line, not just at the start.
+ * Models routinely prefix it with a section number or a title —
+ * `### Section 2 — Explanation`, `#### Part 3: Debug`, `## 2. Explanation`
+ * are all shapes that have been observed. Anchoring the keyword to the
+ * start of the heading, which is what an earlier version of this regex did,
+ * silently missed every one of them: the file entries above the missed
+ * heading were still parsed, but the fenced blocks *below* it — shell
+ * commands in the Debug section, illustrative snippets in Explanation —
+ * were scanned as if they were real file bodies and surfaced as
+ * "skipped" warnings, or worse, written to disk if a `File:`-shaped line
+ * happened to sit above them.
+ *
+ * A heading is therefore recognised as a line of two to six `#` characters
+ * whose text contains `Explanation` or `Debug` as a whole word. Bold and
+ * italic markers, a trailing colon, and any surrounding prose are all
+ * absorbed by the surrounding `[^\r\n]*`. Matching is case-insensitive.
+ *
+ * The two constraints that remain are deliberate:
+ *
+ *   - At least two hashes. Shell, Python, Ruby, and YAML all use `#` for
+ *     line comments, and a file body containing `# Explanation of the
+ *     algorithm` would otherwise be sliced off mid-file, truncating the
+ *     very content the parser was scanning for.
+ *
+ *   - The keyword must be a whole word. `Debugging` and `Explanations`
+ *     do not match, so a heading like `## Debugging tips` inside a file
+ *     body is not mistaken for the terminal section.
  */
-const TERMINAL_HEADING = /^##[ \t]+(?:Explanation|Debug)[ \t]*\r?$/m
+const TERMINAL_HEADING =
+  /^[ \t]*#{2,6}[^\r\n]*\b(?:Explanation|Debug)\b[^\r\n]*$/im
 
 /**
  * Return only the part of the response that can contain file entries. When a
