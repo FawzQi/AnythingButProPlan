@@ -166,12 +166,20 @@ interface AppState {
  * Paths that no longer exist are silently dropped; directories are left alone
  * so the user's expansion state survives the refresh.
  */
-function restoreSelection(node: FileNode, selectedPaths: Set<string>): FileNode {
+function restoreSelection(
+  node: FileNode,
+  selectedPaths: Set<string>,
+): FileNode {
   if (node.type === "file") {
     return { ...node, selected: selectedPaths.has(node.path) };
   }
   if (!node.children) return node;
-  return { ...node, children: node.children.map((child) => restoreSelection(child, selectedPaths)) };
+  return {
+    ...node,
+    children: node.children.map((child) =>
+      restoreSelection(child, selectedPaths),
+    ),
+  };
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -227,7 +235,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadAiSettings: async () => {
     set({ aiSettingsLoading: true });
     try {
-      const result = await window.LARPGent.aiGetSettings();
+      const result = await window.AnythingButProPlan.aiGetSettings();
       set({
         aiProviders: result.providers,
         webChatTargets: result.webChatTargets,
@@ -241,7 +249,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   saveAiSettings: async (request) => {
     try {
-      const settings = await window.LARPGent.aiSaveSettings(request);
+      const settings = await window.AnythingButProPlan.aiSaveSettings(request);
       set({ aiSettings: settings, notice: "AI settings saved." });
     } catch (error) {
       set({ error: message(error) });
@@ -251,7 +259,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadAiModels: async (provider) => {
     set({ aiModelsLoading: true });
     try {
-      const models = await window.LARPGent.aiListModels(provider);
+      const models = await window.AnythingButProPlan.aiListModels(provider);
       set((state) => ({
         aiModelsByProvider: {
           ...state.aiModelsByProvider,
@@ -282,7 +290,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       return;
     }
     try {
-      const suggestion = await window.LARPGent.aiSuggestFiles({
+      const suggestion = await window.AnythingButProPlan.aiSuggestFiles({
         projectRoot,
         filePaths,
         instruction: "",
@@ -319,7 +327,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     try {
       set({ aiSuggesting: true, error: null, aiLastSuggestion: null });
-      const suggestion = await window.LARPGent.aiSuggestFiles({
+      const suggestion = await window.AnythingButProPlan.aiSuggestFiles({
         projectRoot,
         filePaths,
         instruction: customPrompt,
@@ -394,7 +402,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const target: WebChatTargetId = aiSettings?.webChatTarget ?? "deepseek";
     try {
       set({ webChatSending: true, error: null, notice: null });
-      const result = await window.LARPGent.webChatSend({ target, prompt: text });
+      const result = await window.AnythingButProPlan.webChatSend({
+        target,
+        prompt: text,
+      });
       if (!result.ok) {
         set({
           webChatSending: false,
@@ -417,7 +428,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   openWebChat: async () => {
     const target = get().aiSettings?.webChatTarget ?? "deepseek";
     try {
-      await window.LARPGent.webChatOpen(target);
+      await window.AnythingButProPlan.webChatOpen(target);
     } catch (error) {
       set({ error: message(error) });
     }
@@ -425,10 +436,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   openProject: async () => {
     try {
-      const root = await window.LARPGent.pickDirectory();
+      const root = await window.AnythingButProPlan.pickDirectory();
       if (!root) return;
       set({ scanning: true, error: null });
-      const scan = await window.LARPGent.scanDirectory(root);
+      const scan = await window.AnythingButProPlan.scanDirectory(root);
       set({
         projectRoot: scan.root,
         tree: scan.tree,
@@ -466,7 +477,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const previouslySelected = tree ? collectSelectedPaths(tree) : [];
     try {
       set({ scanning: true, error: null });
-      const scan = await window.LARPGent.scanDirectory(projectRoot);
+      const scan = await window.AnythingButProPlan.scanDirectory(projectRoot);
       const restored =
         previouslySelected.length > 0
           ? restoreSelection(scan.tree, new Set(previouslySelected))
@@ -489,7 +500,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const projectRoot = get().projectRoot;
     if (!projectRoot) return;
     try {
-      await window.LARPGent.openTerminal(projectRoot);
+      await window.AnythingButProPlan.openTerminal(projectRoot);
     } catch (error) {
       set({ error: message(error) });
     }
@@ -535,7 +546,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     try {
       set({ building: true, error: null });
-      const result = await window.LARPGent.buildPrompt({
+      const result = await window.AnythingButProPlan.buildPrompt({
         projectRoot: projectRoot ?? "",
         files,
       });
@@ -572,7 +583,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // clipboard.
     const text = insertCustomPrompt(prompt, customPrompt);
     if (text === "") return;
-    await window.LARPGent.copyText(text);
+    await window.AnythingButProPlan.copyText(text);
     set({ notice: "Prompt copied to clipboard." });
   },
 
@@ -580,7 +591,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { prompt, customPrompt } = get();
     const text = insertCustomPrompt(prompt, customPrompt);
     if (text === "") return;
-    const saved = await window.LARPGent.savePrompt(text, "prompt.md");
+    const saved = await window.AnythingButProPlan.savePrompt(text, "prompt.md");
     if (saved) set({ notice: `Prompt saved to ${saved}` });
   },
 
@@ -593,7 +604,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       return;
     }
     try {
-      const result = await window.LARPGent.parseResponse(raw);
+      const result = await window.AnythingButProPlan.parseResponse(raw);
       set({
         parseResult: result,
         includes: Object.fromEntries(
@@ -655,7 +666,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     try {
       set({ applying: true, error: null });
-      const results = await window.LARPGent.applyFiles({ projectRoot, files });
+      const results = await window.AnythingButProPlan.applyFiles({
+        projectRoot,
+        files,
+      });
       set({ applyResults: results, applying: false });
       // Applied changes touch the working tree; refresh Git status so the
       // Source Control tab reflects what the user just wrote.
@@ -679,7 +693,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         editingOriginal: "",
         error: null,
       });
-      const content = await window.LARPGent.readFile(projectRoot, path);
+      const content = await window.AnythingButProPlan.readFile(
+        projectRoot,
+        path,
+      );
       set({
         editingContent: content,
         editingOriginal: content,
@@ -712,7 +729,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!projectRoot || !editingPath) return;
     try {
       set({ saving: true, error: null });
-      const result = await window.LARPGent.writeFile({
+      const result = await window.AnythingButProPlan.writeFile({
         projectRoot,
         path: editingPath,
         content: editingContent,
@@ -741,7 +758,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   deleteFileFromTree: async (path) => {
     const { projectRoot, editingPath } = get();
     if (!projectRoot) return;
-    const confirmed = await window.LARPGent.confirmDialog({
+    const confirmed = await window.AnythingButProPlan.confirmDialog({
       message: `Delete ${path}?`,
       confirmLabel: "Delete",
       tone: "danger",
@@ -749,7 +766,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!confirmed) return;
     try {
       set({ deletingPath: path, error: null });
-      const result = await window.LARPGent.deleteFile({
+      const result = await window.AnythingButProPlan.deleteFile({
         projectRoot,
         path,
       });
@@ -789,7 +806,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     set({ gitStatusLoading: true, error: null });
     try {
-      const status = await window.LARPGent.gitStatus(projectRoot);
+      const status = await window.AnythingButProPlan.gitStatus(projectRoot);
       // A project switch while the call was in flight invalidates the
       // result; drop it rather than applying to the wrong root.
       if (get().projectRoot !== projectRoot) return;
@@ -806,7 +823,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   initGitRepo: async () => {
     const { projectRoot } = get();
     if (!projectRoot) return;
-    const confirmed = await window.LARPGent.confirmDialog({
+    const confirmed = await window.AnythingButProPlan.confirmDialog({
       message: `Initialize a Git repository in ${projectRoot}?`,
       detail: "This creates a .git directory. No files are committed yet.",
       confirmLabel: "Initialize",
@@ -814,7 +831,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!confirmed) return;
     try {
       set({ gitBusy: true, error: null });
-      const result = await window.LARPGent.gitInit({ projectRoot });
+      const result = await window.AnythingButProPlan.gitInit({ projectRoot });
       set({
         gitBusy: false,
         notice: result.created
@@ -832,7 +849,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!projectRoot) return;
     try {
       set({ gitBusy: true, error: null });
-      await window.LARPGent.gitStage({ projectRoot, path });
+      await window.AnythingButProPlan.gitStage({ projectRoot, path });
       set({ gitBusy: false });
       await get().refreshGitStatus();
     } catch (error) {
@@ -845,7 +862,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!projectRoot) return;
     try {
       set({ gitBusy: true, error: null });
-      await window.LARPGent.gitStageAll(projectRoot);
+      await window.AnythingButProPlan.gitStageAll(projectRoot);
       set({ gitBusy: false });
       await get().refreshGitStatus();
     } catch (error) {
@@ -858,7 +875,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!projectRoot) return;
     try {
       set({ gitBusy: true, error: null });
-      await window.LARPGent.gitUnstage({ projectRoot, path });
+      await window.AnythingButProPlan.gitUnstage({ projectRoot, path });
       set({ gitBusy: false });
       await get().refreshGitStatus();
     } catch (error) {
@@ -869,7 +886,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   discardGitPath: async (path, untracked) => {
     const { projectRoot } = get();
     if (!projectRoot) return;
-    const confirmed = await window.LARPGent.confirmDialog(
+    const confirmed = await window.AnythingButProPlan.confirmDialog(
       untracked
         ? {
             message: `Delete untracked file ${path}?`,
@@ -879,7 +896,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         : {
             message: `Discard changes to ${path}?`,
             detail:
-              "The working tree version is replaced with the staged version. This cannot be undone from inside LARPGent.",
+              "The working tree version is replaced with the staged version. This cannot be undone from inside AnythingButProPlan.",
             confirmLabel: "Discard",
             tone: "warning",
           },
@@ -887,7 +904,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!confirmed) return;
     try {
       set({ gitBusy: true, error: null });
-      await window.LARPGent.gitDiscard({ projectRoot, path, untracked });
+      await window.AnythingButProPlan.gitDiscard({
+        projectRoot,
+        path,
+        untracked,
+      });
       set({ gitBusy: false, notice: `Discarded changes to ${path}.` });
       await get().refreshGitStatus();
     } catch (error) {
@@ -898,17 +919,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   discardAllGitPaths: async () => {
     const { projectRoot } = get();
     if (!projectRoot) return;
-    const confirmed = await window.LARPGent.confirmDialog({
+    const confirmed = await window.AnythingButProPlan.confirmDialog({
       message: "Discard every unstaged change?",
       detail:
-        "Tracked files are restored to their staged version. Untracked files are left alone. This cannot be undone from inside LARPGent.",
+        "Tracked files are restored to their staged version. Untracked files are left alone. This cannot be undone from inside AnythingButProPlan.",
       confirmLabel: "Discard all",
       tone: "warning",
     });
     if (!confirmed) return;
     try {
       set({ gitBusy: true, error: null });
-      await window.LARPGent.gitDiscardAll(projectRoot);
+      await window.AnythingButProPlan.gitDiscardAll(projectRoot);
       set({ gitBusy: false, notice: "Discarded all unstaged changes." });
       await get().refreshGitStatus();
     } catch (error) {
@@ -929,7 +950,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     try {
       set({ gitBusy: true, error: null });
-      const result = await window.LARPGent.gitCommit({
+      const result = await window.AnythingButProPlan.gitCommit({
         projectRoot,
         message: gitCommitMessage,
       });

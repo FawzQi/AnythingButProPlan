@@ -1,11 +1,11 @@
 {
-  "name": "LARPGent",
+  "name": "AnythingButProPlan",
   "version": "0.1.0",
   "private": true,
   "description": "Codebase <-> AI bridge: generate prompts from a project, parse AI responses back into files.",
   "main": "./out/main/index.js",
-  "author": "LARPGent <maintainer@example.com>",
-  "homepage": "https://example.com/LARPGent",
+  "author": "AnythingButProPlan <maintainer@example.com>",
+  "homepage": "https://example.com/AnythingButProPlan",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
@@ -52,8 +52,8 @@
     "zustand": "^5.0.15"
   },
   "build": {
-    "appId": "dev.LARPGent.app",
-    "productName": "LARPGent",
+    "appId": "dev.AnythingButProPlan.app",
+    "productName": "AnythingButProPlan",
     "directories": {
       "output": "release"
     },
@@ -72,7 +72,7 @@
         "deb"
       ],
       "category": "Development",
-      "maintainer": "LARPGent <maintainer@example.com>"
+      "maintainer": "AnythingButProPlan <maintainer@example.com>"
     }
   }
 }

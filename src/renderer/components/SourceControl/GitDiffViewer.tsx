@@ -34,7 +34,7 @@ export function GitDiffViewer({
   useEffect(() => {
     let cancelled = false;
     if (!projectRoot) return;
-    window.LARPGent.gitDiff({ projectRoot, path, staged })
+    window.AnythingButProPlan.gitDiff({ projectRoot, path, staged })
       .then((result) => {
         if (cancelled) return;
         setOriginal(result.original);

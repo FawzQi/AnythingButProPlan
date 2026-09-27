@@ -1,46 +1,46 @@
-import type { AiProviderId, AiProviderInfo } from '@shared/types'
-import { makeOpenAiCompatibleProvider } from './openai-compatible'
-import { googleProvider } from './google'
-import { typesafeProvider } from './typesafe'
-import type { AiProvider } from './types'
+import type { AiProviderId, AiProviderInfo } from "@shared/types";
+import { makeOpenAiCompatibleProvider } from "./openai-compatible";
+import { googleProvider } from "./google";
+import { typesafeProvider } from "./typesafe";
+import type { AiProvider } from "./types";
 
 const deepseek = makeOpenAiCompatibleProvider({
-  id: 'deepseek',
-  label: 'DeepSeek',
-  keyUrl: 'https://platform.deepseek.com/api_keys',
-  models: ['deepseek-chat','deepseek-v4-flash', 'deepseek-v4-pro'],
-  baseUrl: 'https://api.deepseek.com/chat/completions',
-})
+  id: "deepseek",
+  label: "DeepSeek",
+  keyUrl: "https://platform.deepseek.com/api_keys",
+  models: ["deepseek-chat", "deepseek-v4-flash", "deepseek-v4-pro"],
+  baseUrl: "https://api.deepseek.com/chat/completions",
+});
 
 const groq = makeOpenAiCompatibleProvider({
-  id: 'groq',
-  label: 'Groq',
-  keyUrl: 'https://console.groq.com/keys',
+  id: "groq",
+  label: "Groq",
+  keyUrl: "https://console.groq.com/keys",
   models: [
-    'llama-3.3-70b-versatile',
-    'llama-3.1-8b-instant',
-    'mixtral-8x7b-32768',
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+    "mixtral-8x7b-32768",
   ],
-  baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
-})
+  baseUrl: "https://api.groq.com/openai/v1/chat/completions",
+});
 
 const openrouter = makeOpenAiCompatibleProvider({
-  id: 'openrouter',
-  label: 'OpenRouter',
-  keyUrl: 'https://openrouter.ai/keys',
+  id: "openrouter",
+  label: "OpenRouter",
+  keyUrl: "https://openrouter.ai/keys",
   models: [
-    'z-ai/glm-5.2:free',
-    'qwen/qwen3.8-27b:free',
-    'inclusionai/ling-3.0-flash-vl:free'
+    "z-ai/glm-5.2:free",
+    "qwen/qwen3.8-27b:free",
+    "inclusionai/ling-3.0-flash-vl:free",
   ],
-  baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
+  baseUrl: "https://openrouter.ai/api/v1/chat/completions",
   // OpenRouter attributes requests to a caller via these headers. They are
   // optional but help with rate-limit accounting on the free tier.
   extraHeaders: {
-    'HTTP-Referer': 'https://github.com/larpgent/larpgent',
-    'X-Title': 'LARPGent',
+    "HTTP-Referer": "https://github.com/AnythingButProPlan/AnythingButProPlan",
+    "X-Title": "AnythingButProPlan",
   },
-})
+});
 
 const PROVIDERS: Record<AiProviderId, AiProvider> = {
   deepseek,
@@ -50,10 +50,10 @@ const PROVIDERS: Record<AiProviderId, AiProvider> = {
   // TypeSafe is registered for key storage and model selection only. Its
   // `complete()` throws — see `typesafe.ts` for why.
   typesafe: typesafeProvider,
-}
+};
 
 export function getProvider(id: AiProviderId): AiProvider {
-  return PROVIDERS[id]
+  return PROVIDERS[id];
 }
 
 export function listProviders(): AiProviderInfo[] {
@@ -62,7 +62,7 @@ export function listProviders(): AiProviderInfo[] {
     label: p.label,
     keyUrl: p.keyUrl,
     models: p.models,
-  }))
+  }));
 }
 
 /**
@@ -75,7 +75,7 @@ export async function discoverModels(
   id: AiProviderId,
   apiKey: string,
 ): Promise<string[]> {
-  const provider = PROVIDERS[id]
-  if (!provider.listModels) return [...provider.models]
-  return provider.listModels(apiKey)
+  const provider = PROVIDERS[id];
+  if (!provider.listModels) return [...provider.models];
+  return provider.listModels(apiKey);
 }

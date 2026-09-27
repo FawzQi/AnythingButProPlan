@@ -18,7 +18,7 @@ function createWindow(): BrowserWindow {
     minHeight: 640,
     show: false,
     backgroundColor: "#16181d",
-    title: "LARPGent",
+    title: "AnythingButProPlan",
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       nodeIntegration: false,

@@ -1,9 +1,9 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow } from "electron";
 import type {
   WebChatSendResult,
   WebChatTargetId,
   WebChatTargetInfo,
-} from '@shared/types'
+} from "@shared/types";
 
 /**
  * Drives a real chat site (chat.deepseek.com, chatgpt.com, …) in a dedicated
@@ -36,16 +36,16 @@ import type {
  * the user can solve it by hand.
  */
 
-const PARTITION = 'persist:larpgent-webchat'
+const PARTITION = "persist:AnythingButProPlan-webchat";
 
 interface WebChatTarget {
-  id: WebChatTargetId
-  label: string
-  url: string
-  inputSelectors: string[]
-  sendSelectors: string[]
-  responseSelectors: string[]
-  stopSelectors: string[]
+  id: WebChatTargetId;
+  label: string;
+  url: string;
+  inputSelectors: string[];
+  sendSelectors: string[];
+  responseSelectors: string[];
+  stopSelectors: string[];
 }
 
 /**
@@ -55,69 +55,124 @@ interface WebChatTarget {
  */
 export const WEB_CHAT_TARGETS: WebChatTarget[] = [
   {
-    id: 'deepseek',
-    label: 'DeepSeek',
-    url: 'https://chat.deepseek.com/',
-    inputSelectors: ['textarea#chat-input', 'textarea[placeholder]', 'div[contenteditable="true"]'],
+    id: "deepseek",
+    label: "DeepSeek",
+    url: "https://chat.deepseek.com/",
+    inputSelectors: [
+      "textarea#chat-input",
+      "textarea[placeholder]",
+      'div[contenteditable="true"]',
+    ],
     // DeepSeek's send button is an unlabelled div that only becomes clickable
     // once the composer has content. The page script falls back to Enter,
     // which is what the site itself listens for.
     sendSelectors: ['div[role="button"][aria-disabled="false"][class*="send"]'],
-    responseSelectors: ['.ds-markdown', 'div[class*="markdown"]'],
-    stopSelectors: ['div[role="button"][aria-label*="Stop" i]', 'button[aria-label*="Stop" i]'],
+    responseSelectors: [".ds-markdown", 'div[class*="markdown"]'],
+    stopSelectors: [
+      'div[role="button"][aria-label*="Stop" i]',
+      'button[aria-label*="Stop" i]',
+    ],
   },
   {
-    id: 'chatgpt',
-    label: 'ChatGPT',
-    url: 'https://chatgpt.com/',
-    inputSelectors: ['#prompt-textarea', 'div[contenteditable="true"].ProseMirror', 'div[contenteditable="true"]'],
-    sendSelectors: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]'],
-    responseSelectors: ['[data-message-author-role="assistant"] .markdown', '[data-message-author-role="assistant"]'],
-    stopSelectors: ['button[data-testid="stop-button"]', 'button[aria-label*="Stop" i]'],
+    id: "chatgpt",
+    label: "ChatGPT",
+    url: "https://chatgpt.com/",
+    inputSelectors: [
+      "#prompt-textarea",
+      'div[contenteditable="true"].ProseMirror',
+      'div[contenteditable="true"]',
+    ],
+    sendSelectors: [
+      'button[data-testid="send-button"]',
+      'button[aria-label="Send prompt"]',
+    ],
+    responseSelectors: [
+      '[data-message-author-role="assistant"] .markdown',
+      '[data-message-author-role="assistant"]',
+    ],
+    stopSelectors: [
+      'button[data-testid="stop-button"]',
+      'button[aria-label*="Stop" i]',
+    ],
   },
   {
-    id: 'claude',
-    label: 'Claude',
-    url: 'https://claude.ai/new',
-    inputSelectors: ['div[contenteditable="true"].ProseMirror', 'div[contenteditable="true"]'],
-    sendSelectors: ['button[aria-label="Send message"]', 'button[aria-label*="Send" i]'],
-    responseSelectors: ['.font-claude-message', '[data-testid="assistant-message"]'],
-    stopSelectors: ['button[aria-label="Stop response"]', 'button[aria-label*="Stop" i]'],
+    id: "claude",
+    label: "Claude",
+    url: "https://claude.ai/new",
+    inputSelectors: [
+      'div[contenteditable="true"].ProseMirror',
+      'div[contenteditable="true"]',
+    ],
+    sendSelectors: [
+      'button[aria-label="Send message"]',
+      'button[aria-label*="Send" i]',
+    ],
+    responseSelectors: [
+      ".font-claude-message",
+      '[data-testid="assistant-message"]',
+    ],
+    stopSelectors: [
+      'button[aria-label="Stop response"]',
+      'button[aria-label*="Stop" i]',
+    ],
   },
   {
-    id: 'gemini',
-    label: 'Gemini',
-    url: 'https://gemini.google.com/app',
-    inputSelectors: ['rich-textarea .ql-editor[contenteditable="true"]', 'div[contenteditable="true"].ql-editor', 'div[contenteditable="true"]'],
-    sendSelectors: ['button.send-button', 'button[aria-label*="Send" i]'],
-    responseSelectors: ['model-response', '.model-response-text', 'message-content'],
+    id: "gemini",
+    label: "Gemini",
+    url: "https://gemini.google.com/app",
+    inputSelectors: [
+      'rich-textarea .ql-editor[contenteditable="true"]',
+      'div[contenteditable="true"].ql-editor',
+      'div[contenteditable="true"]',
+    ],
+    sendSelectors: ["button.send-button", 'button[aria-label*="Send" i]'],
+    responseSelectors: [
+      "model-response",
+      ".model-response-text",
+      "message-content",
+    ],
     stopSelectors: ['button[aria-label*="Stop" i]'],
   },
   {
-    id: 'kimi',
-    label: 'Kimi',
-    url: 'https://kimi.com/',
-    inputSelectors: ['div[contenteditable="true"]', 'textarea'],
+    id: "kimi",
+    label: "Kimi",
+    url: "https://kimi.com/",
+    inputSelectors: ['div[contenteditable="true"]', "textarea"],
     sendSelectors: ['div[class*="send-button"]', 'button[class*="send"]'],
-    responseSelectors: ['div[class*="markdown"]', 'div[class*="segment-content"]'],
+    responseSelectors: [
+      'div[class*="markdown"]',
+      'div[class*="segment-content"]',
+    ],
     stopSelectors: ['div[class*="stop"]'],
   },
   {
-    id: 'qwen',
-    label: 'Qwen Chat',
-    url: 'https://chat.qwen.ai/',
-    inputSelectors: ['textarea#chat-input', 'textarea[placeholder]', 'div[contenteditable="true"]'],
-    sendSelectors: ['button#send-message-button', 'button[type="submit"]', 'button[aria-label*="Send" i]'],
+    id: "qwen",
+    label: "Qwen Chat",
+    url: "https://chat.qwen.ai/",
+    inputSelectors: [
+      "textarea#chat-input",
+      "textarea[placeholder]",
+      'div[contenteditable="true"]',
+    ],
+    sendSelectors: [
+      "button#send-message-button",
+      'button[type="submit"]',
+      'button[aria-label*="Send" i]',
+    ],
     responseSelectors: ['div[class*="markdown"]', 'div[class*="response"]'],
     stopSelectors: ['button[aria-label*="Stop" i]', 'button[class*="stop"]'],
   },
-]
+];
 
 export function listWebChatTargets(): WebChatTargetInfo[] {
-  return WEB_CHAT_TARGETS.map((t) => ({ id: t.id, label: t.label, url: t.url }))
+  return WEB_CHAT_TARGETS.map((t) => ({
+    id: t.id,
+    label: t.label,
+    url: t.url,
+  }));
 }
 
-const windows = new Map<WebChatTargetId, BrowserWindow>()
+const windows = new Map<WebChatTargetId, BrowserWindow>();
 
 /**
  * Build a Chrome user-agent string for the platform this process is running
@@ -126,18 +181,18 @@ const windows = new Map<WebChatTargetId, BrowserWindow>()
  * UA, and a mismatch is itself a fingerprint.
  */
 function plainChromeUserAgent(): string {
-  const chrome = process.versions.chrome ?? '120.0.0.0'
-  let platform = 'X11; Linux x86_64'
-  if (process.platform === 'darwin') {
-    platform = 'Macintosh; Intel Mac OS X 10_15_7'
-  } else if (process.platform === 'win32') {
-    platform = 'Windows NT 10.0; Win64; x64'
+  const chrome = process.versions.chrome ?? "120.0.0.0";
+  let platform = "X11; Linux x86_64";
+  if (process.platform === "darwin") {
+    platform = "Macintosh; Intel Mac OS X 10_15_7";
+  } else if (process.platform === "win32") {
+    platform = "Windows NT 10.0; Win64; x64";
   }
-  return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chrome} Safari/537.36`
+  return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chrome} Safari/537.36`;
 }
 
 function findTarget(id: WebChatTargetId): WebChatTarget | undefined {
-  return WEB_CHAT_TARGETS.find((t) => t.id === id)
+  return WEB_CHAT_TARGETS.find((t) => t.id === id);
 }
 
 /**
@@ -147,15 +202,15 @@ function findTarget(id: WebChatTargetId): WebChatTarget | undefined {
  * destroyed between sends so the login survives a normal workflow.
  */
 async function ensureWindow(target: WebChatTarget): Promise<BrowserWindow> {
-  const existing = windows.get(target.id)
-  if (existing && !existing.isDestroyed()) return existing
+  const existing = windows.get(target.id);
+  if (existing && !existing.isDestroyed()) return existing;
 
   const win = new BrowserWindow({
     width: 1100,
     height: 820,
     show: false,
-    title: `LARPGent — ${target.label}`,
-    backgroundColor: '#16181d',
+    title: `AnythingButProPlan — ${target.label}`,
+    backgroundColor: "#16181d",
     autoHideMenuBar: true,
     webPreferences: {
       partition: PARTITION,
@@ -166,15 +221,15 @@ async function ensureWindow(target: WebChatTarget): Promise<BrowserWindow> {
       // in the app's renderer bridge should be reachable from a third-party
       // page.
     },
-  })
+  });
 
-  win.webContents.setUserAgent(plainChromeUserAgent())
+  win.webContents.setUserAgent(plainChromeUserAgent());
 
   // OAuth popups ("Sign in with Google", passkey prompts) open in a sibling
   // window that shares the session partition, so the cookies land in the
   // same jar the main chat window reads from.
   win.webContents.setWindowOpenHandler(() => ({
-    action: 'allow',
+    action: "allow",
     overrideBrowserWindowOptions: {
       width: 600,
       height: 750,
@@ -186,12 +241,12 @@ async function ensureWindow(target: WebChatTarget): Promise<BrowserWindow> {
         sandbox: true,
       },
     },
-  }))
+  }));
 
-  win.on('closed', () => windows.delete(target.id))
-  windows.set(target.id, win)
-  await win.loadURL(target.url)
-  return win
+  win.on("closed", () => windows.delete(target.id));
+  windows.set(target.id, win);
+  await win.loadURL(target.url);
+  return win;
 }
 
 /**
@@ -235,8 +290,8 @@ function buildScript(target: WebChatTarget, prompt: string): string {
   const stopSels = ${JSON.stringify(target.stopSelectors)};
   const prompt = ${JSON.stringify(prompt)};
 
-  window.__larpgentWebChatAbort = false;
-  const aborted = () => window.__larpgentWebChatAbort === true;
+  window.__AnythingButProPlanWebChatAbort = false;
+  const aborted = () => window.__AnythingButProPlanWebChatAbort === true;
 
   let input = null;
   for (let i = 0; i < 80; i++) {
@@ -328,12 +383,12 @@ function buildScript(target: WebChatTarget, prompt: string): string {
 
   if (sawAny) return { ok: true, text: lastText };
   return { ok: false, error: 'Timed out waiting for a response.' };
-})()`
+})()`;
 }
 
 function describe(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  return message
+  const message = error instanceof Error ? error.message : String(error);
+  return message;
 }
 
 /**
@@ -350,46 +405,53 @@ export async function sendToWebChat(
   targetId: WebChatTargetId,
   prompt: string,
 ): Promise<WebChatSendResult> {
-  const target = findTarget(targetId)
-  if (!target) return { ok: false, error: `Unknown web chat target: ${targetId}` }
+  const target = findTarget(targetId);
+  if (!target)
+    return { ok: false, error: `Unknown web chat target: ${targetId}` };
 
-  let win: BrowserWindow
+  let win: BrowserWindow;
   try {
-    win = await ensureWindow(target)
+    win = await ensureWindow(target);
   } catch (error) {
     return {
       ok: false,
       error: `Could not open ${target.label}: ${describe(error)}`,
-    }
+    };
   }
 
-  if (win.isMinimized()) win.restore()
-  win.showInactive()
+  if (win.isMinimized()) win.restore();
+  win.showInactive();
 
   try {
     await win.webContents.executeJavaScript(
-      'window.__larpgentWebChatAbort = false;',
+      "window.__AnythingButProPlanWebChatAbort = false;",
       true,
-    )
+    );
   } catch {
     // The page has not finished loading; the script sets the flag itself.
   }
 
-  let result: WebChatSendResult
+  let result: WebChatSendResult;
   try {
     const raw = (await win.webContents.executeJavaScript(
       buildScript(target, prompt),
       true,
-    )) as { ok?: boolean; text?: string; error?: string } | undefined
-    if (!raw || typeof raw !== 'object') {
-      result = { ok: false, error: `${target.label} returned an unexpected result.` }
+    )) as { ok?: boolean; text?: string; error?: string } | undefined;
+    if (!raw || typeof raw !== "object") {
+      result = {
+        ok: false,
+        error: `${target.label} returned an unexpected result.`,
+      };
     } else if (raw.ok) {
-      result = { ok: true, text: typeof raw.text === 'string' ? raw.text : '' }
+      result = { ok: true, text: typeof raw.text === "string" ? raw.text : "" };
     } else {
-      result = { ok: false, error: raw.error ?? `${target.label} reported a failure.` }
+      result = {
+        ok: false,
+        error: raw.error ?? `${target.label} reported a failure.`,
+      };
     }
   } catch (error) {
-    result = { ok: false, error: `${target.label}: ${describe(error)}` }
+    result = { ok: false, error: `${target.label}: ${describe(error)}` };
   }
 
   // A failed send almost always means the user needs to sign in or solve a
@@ -397,23 +459,23 @@ export async function sendToWebChat(
   // unless the user has already taken focus.
   if (!win.isDestroyed()) {
     if (!result.ok) {
-      win.show()
-      win.focus()
+      win.show();
+      win.focus();
     } else if (!win.isFocused()) {
-      win.hide()
+      win.hide();
     }
   }
 
-  return result
+  return result;
 }
 
 /** Show the target window so the user can sign in before the first send. */
 export async function openWebChat(targetId: WebChatTargetId): Promise<void> {
-  const target = findTarget(targetId)
-  if (!target) return
-  const win = await ensureWindow(target)
-  win.show()
-  win.focus()
+  const target = findTarget(targetId);
+  if (!target) return;
+  const win = await ensureWindow(target);
+  win.show();
+  win.focus();
 }
 
 /**
@@ -423,9 +485,12 @@ export async function openWebChat(targetId: WebChatTargetId): Promise<void> {
  */
 export function cancelWebChat(): void {
   for (const win of windows.values()) {
-    if (win.isDestroyed()) continue
+    if (win.isDestroyed()) continue;
     win.webContents
-      .executeJavaScript('window.__larpgentWebChatAbort = true;', true)
-      .catch(() => undefined)
+      .executeJavaScript(
+        "window.__AnythingButProPlanWebChatAbort = true;",
+        true,
+      )
+      .catch(() => undefined);
   }
 }

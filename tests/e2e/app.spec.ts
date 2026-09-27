@@ -16,7 +16,9 @@ let app: ElectronApplication;
 let projectRoot: string;
 
 test.beforeAll(async () => {
-  projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), "LARPGent-e2e-"));
+  projectRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "AnythingButProPlan-e2e-"),
+  );
   await fs.mkdir(path.join(projectRoot, "src"), { recursive: true });
   await fs.writeFile(
     path.join(projectRoot, "src", "app.ts"),
@@ -35,7 +37,9 @@ test.afterAll(async () => {
 
 test("opens a window with the three panels", async () => {
   const page = await app.firstWindow();
-  await expect(page.getByRole("heading", { name: "LARPGent" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "AnythingButProPlan" }),
+  ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Project" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Prompt" })).toBeVisible();
   await expect(

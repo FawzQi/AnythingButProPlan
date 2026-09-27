@@ -23,7 +23,7 @@ export function DiffViewer({
   useEffect(() => {
     let cancelled = false;
     if (!projectRoot) return;
-    window.LARPGent.diffFile({ projectRoot, path, content })
+    window.AnythingButProPlan.diffFile({ projectRoot, path, content })
       .then((result) => {
         if (!cancelled) setOriginal(result.original);
       })

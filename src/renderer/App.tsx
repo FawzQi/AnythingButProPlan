@@ -26,7 +26,9 @@ export default function App(): ReactElement {
   return (
     <div className="flex h-full flex-col">
       <header className="flex shrink-0 items-center gap-3 border-b border-[#2c3038] px-3 py-2">
-        <h1 className="text-sm font-semibold text-slate-100">LARPGent</h1>
+        <h1 className="text-sm font-semibold text-slate-100">
+          AnythingButProPlan
+        </h1>
         <span className="text-xs text-slate-500">codebase → prompt → code</span>
         <div className="ml-auto flex items-center gap-2">
           {notice ? (

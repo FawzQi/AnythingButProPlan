@@ -67,7 +67,7 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
         (file): file is typeof file & { path: string } => file.path !== null,
       )
       .map((file) =>
-        window.LARPGent.diffFile({
+        window.AnythingButProPlan.diffFile({
           projectRoot,
           path: file.path,
           content: file.content,
@@ -108,7 +108,7 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
     if (deleteCount > 0) {
       lines.push(`${deleteCount} file(s) will be deleted.`);
     }
-    const confirmed = await window.LARPGent.confirmDialog({
+    const confirmed = await window.AnythingButProPlan.confirmDialog({
       message: `Apply ${selectedCount} file(s)?`,
       detail:
         lines.join("\n") +

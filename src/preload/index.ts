@@ -110,6 +110,6 @@ const api = {
     ipcRenderer.invoke(IpcChannel.WebChatCancel),
 };
 
-export type LARPGentApi = typeof api;
+export type AnythingButProPlanApi = typeof api;
 
-contextBridge.exposeInMainWorld("LARPGent", api);
+contextBridge.exposeInMainWorld("AnythingButProPlan", api);

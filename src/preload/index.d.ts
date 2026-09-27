@@ -1,8 +1,8 @@
-import type { LARPGentApi } from "./index";
+import type { AnythingButProPlanApi } from "./index";
 
 declare global {
   interface Window {
-    LARPGent: LARPGentApi;
+    AnythingButProPlan: AnythingButProPlanApi;
   }
 }
 

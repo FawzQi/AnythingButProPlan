@@ -7,7 +7,7 @@ import { applyFiles, computeDiff } from "../../src/main/services/apply-engine";
 let root: string;
 
 beforeEach(async () => {
-  root = await fs.mkdtemp(path.join(os.tmpdir(), "LARPGent-"));
+  root = await fs.mkdtemp(path.join(os.tmpdir(), "AnythingButProPlan-"));
 });
 
 afterEach(async () => {
@@ -100,11 +100,15 @@ describe("applyFiles", () => {
   it("rejects absolute paths outside the root", async () => {
     const results = await applyFiles({
       projectRoot: root,
-      files: [{ path: "/tmp/LARPGent-absolute.ts", content: "nope\n" }],
+      files: [
+        { path: "/tmp/AnythingButProPlan-absolute.ts", content: "nope\n" },
+      ],
     });
 
     expect(results[0]?.status).toBe("failed");
-    await expect(fs.access("/tmp/LARPGent-absolute.ts")).rejects.toThrow();
+    await expect(
+      fs.access("/tmp/AnythingButProPlan-absolute.ts"),
+    ).rejects.toThrow();
   });
 
   it("rejects names Windows cannot create", async () => {

@@ -1,23 +1,23 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { ReactElement, ReactNode } from 'react'
-import Editor from '@monaco-editor/react'
-import { useAppStore } from '../../stores/app-store'
-import { countFiles } from '../../lib/tree'
-import { insertCustomPrompt } from '../../lib/prompt'
-import { Banner, Button, Panel } from '../../lib/ui'
-import { SourceControl } from '../SourceControl'
-import { AiSettingsPanel } from './AiSettingsPanel'
+import { useEffect, useMemo, useState } from "react";
+import type { ReactElement, ReactNode } from "react";
+import Editor from "@monaco-editor/react";
+import { useAppStore } from "../../stores/app-store";
+import { countFiles } from "../../lib/tree";
+import { insertCustomPrompt } from "../../lib/prompt";
+import { Banner, Button, Panel } from "../../lib/ui";
+import { SourceControl } from "../SourceControl";
+import { AiSettingsPanel } from "./AiSettingsPanel";
 
-const TOKEN_WARNING_THRESHOLD = 100_000
+const TOKEN_WARNING_THRESHOLD = 100_000;
 
 function TabButton({
   active,
   onClick,
   children,
 }: {
-  active: boolean
-  onClick: () => void
-  children: ReactNode
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
 }): ReactElement {
   return (
     <button
@@ -25,30 +25,30 @@ function TabButton({
       onClick={onClick}
       className={`border-b-2 px-3 py-2 text-xs font-medium transition ${
         active
-          ? 'border-sky-500 text-slate-100'
-          : 'border-transparent text-slate-500 hover:text-slate-300'
+          ? "border-sky-500 text-slate-100"
+          : "border-transparent text-slate-500 hover:text-slate-300"
       }`}
     >
       {children}
     </button>
-  )
+  );
 }
 
 function PromptTab(): ReactElement {
-  const prompt = useAppStore((state) => state.prompt)
-  const tokenCount = useAppStore((state) => state.tokenCount)
-  const promptFileCount = useAppStore((state) => state.promptFileCount)
-  const unreadable = useAppStore((state) => state.unreadable)
-  const sensitiveFiles = useAppStore((state) => state.sensitiveFiles)
-  const customPrompt = useAppStore((state) => state.customPrompt)
-  const setCustomPrompt = useAppStore((state) => state.setCustomPrompt)
-  const aiSettings = useAppStore((state) => state.aiSettings)
-  const aiSuggesting = useAppStore((state) => state.aiSuggesting)
-  const aiLastSuggestion = useAppStore((state) => state.aiLastSuggestion)
-  const mapTokenCount = useAppStore((state) => state.mapTokenCount)
-  const suggestFiles = useAppStore((state) => state.suggestFiles)
-  const setEditorTab = useAppStore((state) => state.setEditorTab)
-  const webChatSending = useAppStore((state) => state.webChatSending)
+  const prompt = useAppStore((state) => state.prompt);
+  const tokenCount = useAppStore((state) => state.tokenCount);
+  const promptFileCount = useAppStore((state) => state.promptFileCount);
+  const unreadable = useAppStore((state) => state.unreadable);
+  const sensitiveFiles = useAppStore((state) => state.sensitiveFiles);
+  const customPrompt = useAppStore((state) => state.customPrompt);
+  const setCustomPrompt = useAppStore((state) => state.setCustomPrompt);
+  const aiSettings = useAppStore((state) => state.aiSettings);
+  const aiSuggesting = useAppStore((state) => state.aiSuggesting);
+  const aiLastSuggestion = useAppStore((state) => state.aiLastSuggestion);
+  const mapTokenCount = useAppStore((state) => state.mapTokenCount);
+  const suggestFiles = useAppStore((state) => state.suggestFiles);
+  const setEditorTab = useAppStore((state) => state.setEditorTab);
+  const webChatSending = useAppStore((state) => state.webChatSending);
 
   // What the user actually sees and copies: the built base prompt with the
   // current additional instructions appended. Recomputing here (rather than at
@@ -57,46 +57,49 @@ function PromptTab(): ReactElement {
   const effectivePrompt = useMemo(
     () => insertCustomPrompt(prompt, customPrompt),
     [prompt, customPrompt],
-  )
+  );
 
   // Token count of the effective prompt. When there is no custom section the
   // build-time count is exact; when there is one, recompute via IPC —
   // debounced so typing does not flood the main process.
-  const [customTokens, setCustomTokens] = useState<number | null>(null)
+  const [customTokens, setCustomTokens] = useState<number | null>(null);
   useEffect(() => {
-    if (prompt === '' || customPrompt.trim() === '') {
-      setCustomTokens(null)
-      return
+    if (prompt === "" || customPrompt.trim() === "") {
+      setCustomTokens(null);
+      return;
     }
     const timer = setTimeout(() => {
-      void window.LARPGent.countTokens(effectivePrompt).then(setCustomTokens)
-    }, 300)
-    return () => clearTimeout(timer)
-  }, [effectivePrompt, customPrompt, prompt])
+      void window.AnythingButProPlan.countTokens(effectivePrompt).then(
+        setCustomTokens,
+      );
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [effectivePrompt, customPrompt, prompt]);
 
-  const displayTokens = customTokens ?? tokenCount
+  const displayTokens = customTokens ?? tokenCount;
 
   const webChatLabel =
-    aiSettings?.webChatTarget === 'chatgpt'
-      ? 'ChatGPT'
-      : aiSettings?.webChatTarget === 'claude'
-        ? 'Claude'
-        : aiSettings?.webChatTarget === 'gemini'
-          ? 'Gemini'
-          : aiSettings?.webChatTarget === 'kimi'
-            ? 'Kimi'
-            : aiSettings?.webChatTarget === 'qwen'
-              ? 'Qwen Chat'
-              : 'DeepSeek'
+    aiSettings?.webChatTarget === "chatgpt"
+      ? "ChatGPT"
+      : aiSettings?.webChatTarget === "claude"
+        ? "Claude"
+        : aiSettings?.webChatTarget === "gemini"
+          ? "Gemini"
+          : aiSettings?.webChatTarget === "kimi"
+            ? "Kimi"
+            : aiSettings?.webChatTarget === "qwen"
+              ? "Qwen Chat"
+              : "DeepSeek";
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
       {displayTokens > TOKEN_WARNING_THRESHOLD ? (
         <div className="p-2">
           <Banner tone="warn">
-            Prompt is ~{displayTokens.toLocaleString()} tokens, above the{' '}
-            {TOKEN_WARNING_THRESHOLD.toLocaleString()} token guidance. Most models will still
-            accept it, but expect slower or truncated responses.
+            Prompt is ~{displayTokens.toLocaleString()} tokens, above the{" "}
+            {TOKEN_WARNING_THRESHOLD.toLocaleString()} token guidance. Most
+            models will still accept it, but expect slower or truncated
+            responses.
           </Banner>
         </div>
       ) : null}
@@ -104,8 +107,8 @@ function PromptTab(): ReactElement {
       {unreadable.length > 0 ? (
         <div className="p-2">
           <Banner tone="warn">
-            {unreadable.length} file(s) could not be read and were left out:{' '}
-            {unreadable.join(', ')}
+            {unreadable.length} file(s) could not be read and were left out:{" "}
+            {unreadable.join(", ")}
           </Banner>
         </div>
       ) : null}
@@ -114,7 +117,7 @@ function PromptTab(): ReactElement {
         <div className="p-2">
           <Banner tone="error">
             This prompt includes {sensitiveFiles.length} file(s) that likely
-            contain secrets: {sensitiveFiles.join(', ')}. Deselect them in the
+            contain secrets: {sensitiveFiles.join(", ")}. Deselect them in the
             project tree if they should not be sent to the AI.
           </Banner>
         </div>
@@ -123,18 +126,18 @@ function PromptTab(): ReactElement {
       {webChatSending ? (
         <div className="p-2">
           <Banner tone="info">
-            Waiting for {webChatLabel} to finish answering. A browser window
-            is open in the background — leave it alone until the reply
-            appears in the AI Response panel.
+            Waiting for {webChatLabel} to finish answering. A browser window is
+            open in the background — leave it alone until the reply appears in
+            the AI Response panel.
           </Banner>
         </div>
       ) : null}
 
       <div className="min-h-0 flex-1">
-        {prompt === '' ? (
+        {prompt === "" ? (
           <p className="p-3 text-xs text-slate-500">
-            {customPrompt.trim() === ''
-              ? 'Generate a prompt to start. With a project open, only the files selected in the tree are included; with no project open, the prompt contains the output contract and your additional instructions alone.'
+            {customPrompt.trim() === ""
+              ? "Generate a prompt to start. With a project open, only the files selected in the tree are included; with no project open, the prompt contains the output contract and your additional instructions alone."
               : 'No prompt generated. Type your instruction below and use "Send to web chat" to send it on its own, or click "Generate prompt" to include the selected files.'}
           </p>
         ) : (
@@ -147,7 +150,7 @@ function PromptTab(): ReactElement {
               readOnly: true,
               domReadOnly: true,
               minimap: { enabled: false },
-              wordWrap: 'on',
+              wordWrap: "on",
               scrollBeyondLastLine: false,
               fontSize: 12,
               automaticLayout: true,
@@ -168,14 +171,14 @@ function PromptTab(): ReactElement {
             variant="ghost"
             className="px-2 py-0.5 text-xs"
             onClick={() => void suggestFiles()}
-            disabled={aiSuggesting || customPrompt.trim() === ''}
+            disabled={aiSuggesting || customPrompt.trim() === ""}
             title={
-              aiSettings?.suggestMethod === 'gitnexus-jev'
-                ? 'Search locally, then rank with Jev (TypeSafe key)'
-                : 'Search locally with GitNexus + BM25 — no AI call'
+              aiSettings?.suggestMethod === "gitnexus-jev"
+                ? "Search locally, then rank with Jev (TypeSafe key)"
+                : "Search locally with GitNexus + BM25 — no AI call"
             }
           >
-            {aiSuggesting ? 'Thinking…' : '✨ Suggest files'}
+            {aiSuggesting ? "Thinking…" : "✨ Suggest files"}
           </Button>
         </div>
         <textarea
@@ -187,14 +190,14 @@ function PromptTab(): ReactElement {
           rows={3}
           className="w-full resize-y rounded border border-[#2c3038] bg-[#12141a] p-2 text-xs text-slate-200 outline-none focus:border-sky-600"
         />
-        {aiSettings?.suggestMethod === 'gitnexus-jev' &&
-        !aiSettings.hasApiKey['typesafe'] ? (
+        {aiSettings?.suggestMethod === "gitnexus-jev" &&
+        !aiSettings.hasApiKey["typesafe"] ? (
           <p className="mt-1 text-[11px] text-slate-500">
-            No TypeSafe key saved.{' '}
+            No TypeSafe key saved.{" "}
             <button
               type="button"
               className="text-sky-400 hover:text-sky-300"
-              onClick={() => setEditorTab('settings')}
+              onClick={() => setEditorTab("settings")}
             >
               Open Settings
             </button>
@@ -203,41 +206,43 @@ function PromptTab(): ReactElement {
         {aiLastSuggestion ? (
           <div className="mt-2">
             <Banner
-              tone={aiLastSuggestion.hallucinated.length > 0 ? 'warn' : 'success'}
+              tone={
+                aiLastSuggestion.hallucinated.length > 0 ? "warn" : "success"
+              }
             >
-              {aiLastSuggestion.paths.length} file(s) selected{' '}
-              {aiLastSuggestion.method === 'gitnexus-only' ? (
+              {aiLastSuggestion.paths.length} file(s) selected{" "}
+              {aiLastSuggestion.method === "gitnexus-only" ? (
                 <>
-                  via local search (gitnexus-only, no AI call,{' '}
-                  {(aiLastSuggestion.candidateCount ?? 0).toLocaleString()}{' '}
+                  via local search (gitnexus-only, no AI call,{" "}
+                  {(aiLastSuggestion.candidateCount ?? 0).toLocaleString()}{" "}
                   candidates)
                 </>
-              ) : aiLastSuggestion.method === 'gitnexus-jev' ? (
+              ) : aiLastSuggestion.method === "gitnexus-jev" ? (
                 <>
                   via GitNexus recall + Jev precision (
-                  {(aiLastSuggestion.jevIncluded?.length ?? 0).toLocaleString()}{' '}
-                  included,{' '}
-                  {(aiLastSuggestion.jevFlagged?.length ?? 0).toLocaleString()}{' '}
-                  for review,{' '}
-                  {(aiLastSuggestion.jevDropped?.length ?? 0).toLocaleString()}{' '}
+                  {(aiLastSuggestion.jevIncluded?.length ?? 0).toLocaleString()}{" "}
+                  included,{" "}
+                  {(aiLastSuggestion.jevFlagged?.length ?? 0).toLocaleString()}{" "}
+                  for review,{" "}
+                  {(aiLastSuggestion.jevDropped?.length ?? 0).toLocaleString()}{" "}
                   dropped) — {aiLastSuggestion.model}
                 </>
               ) : (
                 <>
                   via {aiLastSuggestion.provider}/{aiLastSuggestion.model}
-                  {aiLastSuggestion.method === 'gitnexus'
+                  {aiLastSuggestion.method === "gitnexus"
                     ? ` (gitnexus: ${(aiLastSuggestion.candidateCount ?? 0).toLocaleString()} candidates)`
-                    : ' (current: full map)'}
+                    : " (current: full map)"}
                 </>
-              )}{' '}
-              — {aiLastSuggestion.mapTokens.toLocaleString()} map tokens,{' '}
+              )}{" "}
+              — {aiLastSuggestion.mapTokens.toLocaleString()} map tokens,{" "}
               {aiLastSuggestion.durationMs.toLocaleString()} ms
               {aiLastSuggestion.gitnexusMissing
-                ? ' — gitnexus CLI not found, BM25 search only'
-                : ''}
+                ? " — gitnexus CLI not found, BM25 search only"
+                : ""}
               {aiLastSuggestion.hallucinated.length > 0
                 ? ` — dropped ${aiLastSuggestion.hallucinated.length} nonexistent path(s)`
-                : ''}
+                : ""}
             </Banner>
           </div>
         ) : null}
@@ -251,14 +256,14 @@ function PromptTab(): ReactElement {
         ) : null}
       </footer>
     </div>
-  )
+  );
 }
 
 function EditorTab(): ReactElement {
-  const editingPath = useAppStore((state) => state.editingPath)
-  const editingContent = useAppStore((state) => state.editingContent)
-  const editingLoading = useAppStore((state) => state.editingLoading)
-  const setEditingContent = useAppStore((state) => state.setEditingContent)
+  const editingPath = useAppStore((state) => state.editingPath);
+  const editingContent = useAppStore((state) => state.editingContent);
+  const editingLoading = useAppStore((state) => state.editingLoading);
+  const setEditingContent = useAppStore((state) => state.setEditingContent);
 
   if (!editingPath) {
     return (
@@ -268,7 +273,7 @@ function EditorTab(): ReactElement {
           and editing. Saving writes it back to disk.
         </p>
       </div>
-    )
+    );
   }
 
   if (editingLoading) {
@@ -276,7 +281,7 @@ function EditorTab(): ReactElement {
       <div className="flex h-full min-h-0 flex-1 items-center justify-center p-6">
         <p className="text-xs text-slate-500">Loading {editingPath}…</p>
       </div>
-    )
+    );
   }
 
   return (
@@ -288,49 +293,49 @@ function EditorTab(): ReactElement {
         path={editingPath}
         theme="vs-dark"
         value={editingContent}
-        onChange={(value) => setEditingContent(value ?? '')}
+        onChange={(value) => setEditingContent(value ?? "")}
         options={{
           readOnly: false,
           minimap: { enabled: false },
-          wordWrap: 'on',
+          wordWrap: "on",
           scrollBeyondLastLine: false,
           fontSize: 12,
           automaticLayout: true,
         }}
       />
     </div>
-  )
+  );
 }
 
 export function PromptDashboard(): ReactElement {
-  const tree = useAppStore((state) => state.tree)
-  const prompt = useAppStore((state) => state.prompt)
-  const customPrompt = useAppStore((state) => state.customPrompt)
-  const building = useAppStore((state) => state.building)
-  const buildPrompt = useAppStore((state) => state.buildPrompt)
-  const clearPrompt = useAppStore((state) => state.clearPrompt)
-  const copyPrompt = useAppStore((state) => state.copyPrompt)
-  const savePrompt = useAppStore((state) => state.savePrompt)
-  const webChatSending = useAppStore((state) => state.webChatSending)
-  const sendToWebChat = useAppStore((state) => state.sendToWebChat)
+  const tree = useAppStore((state) => state.tree);
+  const prompt = useAppStore((state) => state.prompt);
+  const customPrompt = useAppStore((state) => state.customPrompt);
+  const building = useAppStore((state) => state.building);
+  const buildPrompt = useAppStore((state) => state.buildPrompt);
+  const clearPrompt = useAppStore((state) => state.clearPrompt);
+  const copyPrompt = useAppStore((state) => state.copyPrompt);
+  const savePrompt = useAppStore((state) => state.savePrompt);
+  const webChatSending = useAppStore((state) => state.webChatSending);
+  const sendToWebChat = useAppStore((state) => state.sendToWebChat);
 
-  const editorTab = useAppStore((state) => state.editorTab)
-  const setEditorTab = useAppStore((state) => state.setEditorTab)
-  const editingPath = useAppStore((state) => state.editingPath)
-  const editingContent = useAppStore((state) => state.editingContent)
-  const editingOriginal = useAppStore((state) => state.editingOriginal)
-  const saving = useAppStore((state) => state.saving)
-  const saveEditingFile = useAppStore((state) => state.saveEditingFile)
-  const revertEditingFile = useAppStore((state) => state.revertEditingFile)
-  const closeEditor = useAppStore((state) => state.closeEditor)
+  const editorTab = useAppStore((state) => state.editorTab);
+  const setEditorTab = useAppStore((state) => state.setEditorTab);
+  const editingPath = useAppStore((state) => state.editingPath);
+  const editingContent = useAppStore((state) => state.editingContent);
+  const editingOriginal = useAppStore((state) => state.editingOriginal);
+  const saving = useAppStore((state) => state.saving);
+  const saveEditingFile = useAppStore((state) => state.saveEditingFile);
+  const revertEditingFile = useAppStore((state) => state.revertEditingFile);
+  const closeEditor = useAppStore((state) => state.closeEditor);
 
-  const gitStatus = useAppStore((state) => state.gitStatus)
+  const gitStatus = useAppStore((state) => state.gitStatus);
 
   const counts = useMemo(
     () => (tree ? countFiles(tree) : { selected: 0, total: 0 }),
     [tree],
-  )
-  const editingDirty = editingContent !== editingOriginal
+  );
+  const editingDirty = editingContent !== editingOriginal;
 
   // A count badge for the Source Control tab: staged + unstaged + untracked.
   // `undefined` means not yet loaded; `null` means not a repo — both render
@@ -341,35 +346,39 @@ export function PromptDashboard(): ReactElement {
         gitStatus.unstaged.length +
         gitStatus.untracked.length +
         gitStatus.conflicted.length
-      : 0
+      : 0;
 
   // "Send to web chat" is enabled by either half of the request: a built
   // prompt, or an instruction typed into the textarea. When the prompt is
   // empty the instruction is sent on its own — see `sendToWebChat` in the
   // store.
   const canSendToWebChat =
-    !webChatSending && (prompt !== '' || customPrompt.trim() !== '')
+    !webChatSending && (prompt !== "" || customPrompt.trim() !== "");
 
   const headerActions: ReactNode =
-    editorTab === 'prompt' ? (
+    editorTab === "prompt" ? (
       <>
         <span className="text-xs text-slate-500">
           {counts.selected} / {counts.total} selected
         </span>
-        <Button variant="primary" onClick={() => void buildPrompt()} disabled={building}>
-          {building ? 'Building…' : 'Generate prompt'}
+        <Button
+          variant="primary"
+          onClick={() => void buildPrompt()}
+          disabled={building}
+        >
+          {building ? "Building…" : "Generate prompt"}
         </Button>
         <Button
           onClick={clearPrompt}
-          disabled={prompt === ''}
+          disabled={prompt === ""}
           title="Clear the generated prompt. The input instruction is kept, and can be sent to a web chat on its own."
         >
           Clear
         </Button>
-        <Button onClick={() => void copyPrompt()} disabled={prompt === ''}>
+        <Button onClick={() => void copyPrompt()} disabled={prompt === ""}>
           Copy
         </Button>
-        <Button onClick={() => void savePrompt()} disabled={prompt === ''}>
+        <Button onClick={() => void savePrompt()} disabled={prompt === ""}>
           Save
         </Button>
         <Button
@@ -377,15 +386,15 @@ export function PromptDashboard(): ReactElement {
           onClick={() => void sendToWebChat()}
           disabled={!canSendToWebChat}
           title={
-            prompt === ''
-              ? 'Send the input instruction to the configured chat site on its own, with no prompt and no file context'
-              : 'Send the generated prompt to the configured chat site and pull the reply into the AI Response panel'
+            prompt === ""
+              ? "Send the input instruction to the configured chat site on its own, with no prompt and no file context"
+              : "Send the generated prompt to the configured chat site and pull the reply into the AI Response panel"
           }
         >
-          {webChatSending ? 'Waiting…' : 'Send to web chat'}
+          {webChatSending ? "Waiting…" : "Send to web chat"}
         </Button>
       </>
-    ) : editorTab === 'editor' ? (
+    ) : editorTab === "editor" ? (
       <>
         {editingPath ? (
           <span
@@ -393,7 +402,9 @@ export function PromptDashboard(): ReactElement {
             title={editingPath}
           >
             {editingPath}
-            {editingDirty ? <span className="ml-1 text-amber-400">•</span> : null}
+            {editingDirty ? (
+              <span className="ml-1 text-amber-400">•</span>
+            ) : null}
           </span>
         ) : (
           <span className="text-xs text-slate-500">No file open</span>
@@ -410,22 +421,16 @@ export function PromptDashboard(): ReactElement {
           onClick={() => void saveEditingFile()}
           disabled={!editingPath || !editingDirty || saving}
         >
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? "Saving…" : "Save"}
         </Button>
-        <Button
-          variant="ghost"
-          onClick={closeEditor}
-          disabled={!editingPath}
-        >
+        <Button variant="ghost" onClick={closeEditor} disabled={!editingPath}>
           Close
         </Button>
       </>
-    ) : (
-      // Source Control tab has its own action bar inside the panel — the
-      // header shows nothing here, keeping the panel's own controls as the
-      // single source of truth for Git operations.
-      null
-    )
+    ) : // Source Control tab has its own action bar inside the panel — the
+    // header shows nothing here, keeping the panel's own controls as the
+    // single source of truth for Git operations.
+    null;
 
   return (
     <Panel
@@ -436,21 +441,23 @@ export function PromptDashboard(): ReactElement {
       <div className="flex h-full flex-col">
         <div className="flex shrink-0 items-stretch border-b border-[#2c3038]">
           <TabButton
-            active={editorTab === 'prompt'}
-            onClick={() => setEditorTab('prompt')}
+            active={editorTab === "prompt"}
+            onClick={() => setEditorTab("prompt")}
           >
             Prompt
           </TabButton>
           <TabButton
-            active={editorTab === 'editor'}
-            onClick={() => setEditorTab('editor')}
+            active={editorTab === "editor"}
+            onClick={() => setEditorTab("editor")}
           >
             Editor
-            {editingDirty ? <span className="ml-1 text-amber-400">•</span> : null}
+            {editingDirty ? (
+              <span className="ml-1 text-amber-400">•</span>
+            ) : null}
           </TabButton>
           <TabButton
-            active={editorTab === 'source'}
-            onClick={() => setEditorTab('source')}
+            active={editorTab === "source"}
+            onClick={() => setEditorTab("source")}
           >
             Source Control
             {gitChangeCount > 0 ? (
@@ -460,23 +467,23 @@ export function PromptDashboard(): ReactElement {
             ) : null}
           </TabButton>
           <TabButton
-            active={editorTab === 'settings'}
-            onClick={() => setEditorTab('settings')}
+            active={editorTab === "settings"}
+            onClick={() => setEditorTab("settings")}
           >
             Settings
           </TabButton>
         </div>
 
-        {editorTab === 'prompt' ? (
+        {editorTab === "prompt" ? (
           <PromptTab />
-        ) : editorTab === 'editor' ? (
+        ) : editorTab === "editor" ? (
           <EditorTab />
-        ) : editorTab === 'settings' ? (
+        ) : editorTab === "settings" ? (
           <AiSettingsPanel />
         ) : (
           <SourceControl />
         )}
       </div>
     </Panel>
-  )
+  );
 }

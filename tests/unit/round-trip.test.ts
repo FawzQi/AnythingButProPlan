@@ -26,7 +26,9 @@ const SKIPPED = ["ignored.log", "node_modules", "image.png"];
 let root: string;
 
 beforeEach(async () => {
-  root = await fs.mkdtemp(path.join(os.tmpdir(), "LARPGent-roundtrip-"));
+  root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "AnythingButProPlan-roundtrip-"),
+  );
   for (const [relative, content] of Object.entries(FILES)) {
     const absolute = path.join(root, relative);
     await fs.mkdir(path.dirname(absolute), { recursive: true });
