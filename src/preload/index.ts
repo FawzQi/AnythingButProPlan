@@ -8,6 +8,16 @@ import type {
   AiSuggestion,
   AiSuggestRequest,
   ApplyRequest,
+  ConvertProgress,
+  ConvertRequest,
+  ConvertResult,
+  IndexBuildProgress,
+  IndexBuildRequest,
+  IndexBuildResult,
+  ResearchCancelRequest,
+  ResearchPromptRequest,
+  ResearchPromptResult,
+  ResearchScanResult,
   ApplyResult,
   ConfirmDialogRequest,
   DeleteFileRequest,
@@ -108,7 +118,47 @@ const api = {
     ipcRenderer.invoke(IpcChannel.WebChatOpen, target),
   webChatCancel: (): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.WebChatCancel),
+  researchScan: (projectRoot: string): Promise<ResearchScanResult> =>
+    ipcRenderer.invoke(IpcChannel.ResearchScan, projectRoot),
+  researchConvert: (request: ConvertRequest): Promise<ConvertResult> =>
+    ipcRenderer.invoke(IpcChannel.ResearchConvert, request),
+  researchBuildIndex: (
+    request: IndexBuildRequest,
+  ): Promise<IndexBuildResult> =>
+    ipcRenderer.invoke(IpcChannel.ResearchBuildIndex, request),
+  researchBuildPrompt: (
+    request: ResearchPromptRequest,
+  ): Promise<ResearchPromptResult> =>
+    ipcRenderer.invoke(IpcChannel.ResearchBuildPrompt, request),
+  researchCancel: (request: ResearchCancelRequest): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.ResearchCancel, request),
+  /**
+   * Progress subscriptions. Each returns its own unsubscribe function rather
+   * than exposing `ipcRenderer.removeListener` — the renderer never sees the
+   * event emitter, and a listener that is not removed keeps the component's
+   * closure alive across re-mounts, which is how a cancelled conversion ends
+   * up writing into a stale store.
+   */
+  onResearchConvertProgress: (
+    callback: (progress: ConvertProgress) => void,
+  ): (() => void) =>
+    subscribe<ConvertProgress>(IpcChannel.ResearchConvertProgress, callback),
+  onResearchIndexProgress: (
+    callback: (progress: IndexBuildProgress) => void,
+  ): (() => void) =>
+    subscribe<IndexBuildProgress>(IpcChannel.ResearchIndexProgress, callback),
 };
+
+function subscribe<T>(
+  channel: string,
+  callback: (payload: T) => void,
+): () => void {
+  const listener = (_event: unknown, payload: T): void => callback(payload);
+  ipcRenderer.on(channel, listener);
+  return () => {
+    ipcRenderer.removeListener(channel, listener);
+  };
+}
 
 export type AnythingButProPlanApi = typeof api;
 

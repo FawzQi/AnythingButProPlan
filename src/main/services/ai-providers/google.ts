@@ -1,7 +1,19 @@
-import type { AiProvider, CompleteInput } from "./types";
+import type { AiProvider, CompleteInput, EmbedInput, VisionInput } from "./types";
 import { describeFetchError, httpFetch } from "./http";
 
 const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+
+/**
+ * The embedding model the research index is built with.
+ *
+ * Pinned rather than configurable. A different model produces vectors in a
+ * different space, so switching invalidates every stored embedding and the
+ * whole corpus has to be re-embedded — a cost the user pays for no gain they
+ * can see. `text-embedding-004` at 768 dimensions is the current default on
+ * this endpoint. See CLAUDE.md, "Embeddings".
+ */
+export const EMBEDDING_MODEL = "text-embedding-004";
+export const EMBEDDING_DIMENSIONS = 768;
 
 /**
  * Google AI Studio uses a different shape from the OpenAI-compatible
@@ -112,5 +124,111 @@ export const googleProvider: AiProvider = {
       );
     }
     return text;
+  },
+  /**
+   * Vision uses `inlineData` parts — the same `parts` array as text, with
+   * `mimeType` and base64 `data` instead of `text`. Google accepts up to 16
+   * images per request on this endpoint, which is why the figure analyzer
+   * batches at 20 for the OpenAI-compatible vendors but clamps to 16 when
+   * this provider is selected.
+   */
+  async completeVision(input: VisionInput): Promise<string> {
+    const url = `${BASE}/${encodeURIComponent(input.model)}:generateContent?key=${encodeURIComponent(input.apiKey)}`;
+    const body = {
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: input.prompt },
+            ...input.images.map((image) => ({
+              inlineData: { mimeType: image.mimeType, data: image.base64 },
+            })),
+          ],
+        },
+      ],
+      generationConfig: {
+        maxOutputTokens: input.maxTokens ?? 1024,
+        temperature: 0.1,
+      },
+    };
+    let response: Response;
+    try {
+      response = await httpFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      throw new Error(describeFetchError("Google AI Studio", error), {
+        cause: error,
+      });
+    }
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(
+        `Google AI Studio returned ${response.status}: ${
+          detail.slice(0, 300) || response.statusText
+        }`,
+      );
+    }
+    const json = (await response.json()) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (typeof text !== "string" || text === "") {
+      throw new Error("Google AI Studio returned no image description.");
+    }
+    return text;
+  },
+  /**
+   * `batchEmbedContents` takes up to 100 requests per call, which is exactly
+   * why the index builder batches at 100. The response's `embeddings` array
+   * is aligned with `requests`, and the caller relies on that alignment to
+   * pair each vector with its chunk.
+   */
+  async embed(input: EmbedInput): Promise<number[][]> {
+    if (input.texts.length === 0) return [];
+    const url = `${BASE}/${encodeURIComponent(input.model)}:batchEmbedContents?key=${encodeURIComponent(input.apiKey)}`;
+    const body = {
+      requests: input.texts.map((text) => ({
+        // Each sub-request carries the full `models/...` name, unlike the
+        // `generateContent` call where the model is in the URL path.
+        model: `models/${input.model}`,
+        content: { parts: [{ text }] },
+      })),
+    };
+    let response: Response;
+    try {
+      response = await httpFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      throw new Error(describeFetchError("Google AI Studio", error), {
+        cause: error,
+      });
+    }
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(
+        `Google AI Studio embedding returned ${response.status}: ${
+          detail.slice(0, 300) || response.statusText
+        }`,
+      );
+    }
+    const json = (await response.json()) as {
+      embeddings?: Array<{ values?: number[] }>;
+    };
+    const vectors = (json.embeddings ?? []).map((entry) => entry.values ?? []);
+    if (vectors.length !== input.texts.length) {
+      // A short array would silently misalign every vector after the gap
+      // with the wrong chunk — worse than failing, because the index would
+      // look complete and retrieve the wrong passages.
+      throw new Error(
+        `Google AI Studio returned ${vectors.length} embeddings for ${input.texts.length} texts.`,
+      );
+    }
+    return vectors;
   },
 };

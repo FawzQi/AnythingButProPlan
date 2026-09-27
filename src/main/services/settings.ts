@@ -5,6 +5,7 @@ import type {
   AiProviderId,
   AiSettings,
   AiSettingsSaveRequest,
+  AppMode,
   SuggestMethod,
   WebChatTargetId,
 } from '@shared/types'
@@ -29,6 +30,8 @@ interface StoredShape {
   suggestMethod: SuggestMethod
   /** Which chat site the "Send to web chat" button drives. */
   webChatTarget: WebChatTargetId
+  /** Coding mode or research mode. Defaults to `coding`. */
+  mode: AppMode
 }
 
 const EMPTY: StoredShape = {
@@ -37,6 +40,11 @@ const EMPTY: StoredShape = {
   modelByProvider: {},
   suggestMethod: 'gitnexus-only',
   webChatTarget: 'deepseek',
+  mode: 'coding',
+}
+
+function asAppMode(value: unknown): AppMode {
+  return value === 'research' ? 'research' : 'coding'
 }
 
 const WEB_CHAT_IDS: readonly WebChatTargetId[] = [
@@ -75,10 +83,17 @@ async function readStored(): Promise<StoredShape> {
       // hand-edited settings file cannot put the app into an unrecognised
       // state.
       suggestMethod:
-        parsed.suggestMethod === 'gitnexus-jev'
-          ? 'gitnexus-jev'
+        parsed.suggestMethod === 'gitnexus-jev' ||
+        parsed.suggestMethod === 'gitnexus-llm'
+          ? parsed.suggestMethod
           : 'gitnexus-only',
       webChatTarget: asWebChatTarget(parsed.webChatTarget),
+      // Research mode arrived after the first settings files were written,
+      // so an existing file has no `mode` at all. Narrowing here rather than
+      // trusting the field means a missing or hand-edited value lands on
+      // coding mode — the half of the app that carries the filesystem
+      // actions — instead of an unrecognised state.
+      mode: asAppMode(parsed.mode),
     }
   } catch {
     return { ...EMPTY }
@@ -126,6 +141,7 @@ export async function getSettings(): Promise<AiSettings> {
     hasApiKey,
     suggestMethod: stored.suggestMethod,
     webChatTarget: stored.webChatTarget,
+    mode: stored.mode,
   }
 }
 
@@ -141,6 +157,9 @@ export async function saveSettings(
   }
   if (request.webChatTarget !== undefined) {
     stored.webChatTarget = request.webChatTarget
+  }
+  if (request.mode !== undefined) {
+    stored.mode = request.mode
   }
   if (request.model) {
     stored.modelByProvider = {

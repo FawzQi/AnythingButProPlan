@@ -339,8 +339,33 @@ export type AiProviderId =
  *                       calibrated confidences are routed into include /
  *                       flag-for-review / drop. Requires a TypeSafe API
  *                       key; no chat provider is contacted.
+ *   - `gitnexus-llm`  — same recall front half as `gitnexus-only`, but the
+ *                       precision pass uses an ordinary chat completion
+ *                       (DeepSeek, Groq, OpenRouter, or Google AI Studio).
+ *                       The surviving candidates are handed to the model
+ *                       in one prompt and it returns a JSON verdict per
+ *                       file, scored on the same 0–3 scale Jev uses. Use
+ *                       this when the TypeSafe key is not available but a
+ *                       chat provider key already is, or when the user
+ *                       wants to compare how a general model ranks the
+ *                       candidates against Jev's calibrated answers.
  */
-export type SuggestMethod = 'gitnexus-only' | 'gitnexus-jev'
+export type SuggestMethod = 'gitnexus-only' | 'gitnexus-jev' | 'gitnexus-llm'
+
+/**
+ * Which half of the app is on screen.
+ *
+ *   - `coding`   — source tree in, patch out: FileTree, PromptDashboard,
+ *                  ResponsePanel, apply engine, Git integration.
+ *   - `research` — document set in, cited answer out: DocumentTree,
+ *                  ResearchDashboard, ResponsePanel.
+ *
+ * The mode is a whole-app switch rather than a per-project one, and it is
+ * persisted, because it tracks what the user is doing rather than what the
+ * folder contains — the same folder of PDFs is still research mode after a
+ * restart.
+ */
+export type AppMode = 'coding' | 'research'
 
 export interface AiProviderInfo {
   id: AiProviderId
@@ -374,6 +399,8 @@ export interface AiSettings {
    * per-token billing.
    */
   webChatTarget: WebChatTargetId
+  /** Coding mode or research mode — see `AppMode`. */
+  mode: AppMode
 }
 
 export interface AiSettingsSaveRequest {
@@ -386,6 +413,8 @@ export interface AiSettingsSaveRequest {
   suggestMethod?: SuggestMethod
   /** Switch the web chat target used by "Send to web chat". */
   webChatTarget?: WebChatTargetId
+  /** Switch between coding mode and research mode. */
+  mode?: AppMode
 }
 
 export interface AiSuggestRequest {
@@ -508,4 +537,210 @@ export interface WebChatSendResult {
   text?: string
   /** User-readable failure reason. Present when `ok` is false. */
   error?: string
+}
+/* ------------------------------------------------------------------------ *
+ * Research mode
+ * ------------------------------------------------------------------------ */
+
+/**
+ * How a document is converted.
+ *
+ *   - `text`        — text only. Figures are left as whatever the converter
+ *                     emits (Marker writes image files next to the markdown
+ *                     and references them); no vision call is made.
+ *   - `text-images` — text plus a vision pass over the extracted figures,
+ *                     each described by a chat model and the description
+ *                     appended to the markdown under the figure reference.
+ *                     Costs a provider call; a paper with 30 figures is a
+ *                     few cents on DeepSeek.
+ */
+export type ConversionMode = 'text' | 'text-images'
+
+/**
+ * Where a document sits in the conversion pipeline.
+ *
+ *   - `ready`      — found under `docs/`, no conversion recorded yet.
+ *   - `converted`  — markdown exists under `converted/<slug>/`. Image
+ *                    analysis may or may not have run; `imageAnalyzed` says.
+ *   - `failed`     — the last attempt failed. `error` holds the reason. The
+ *                    record survives so the failure is visible on the next
+ *                    launch instead of the document silently reverting to
+ *                    `ready`.
+ */
+export type DocumentStatus = 'ready' | 'converted' | 'failed'
+
+export interface DocumentEntry {
+  /** Path relative to `docs/`, POSIX separators. */
+  path: string
+  /** Flat directory name under `converted/` for this document. */
+  slug: string
+  sizeBytes: number
+  status: DocumentStatus
+  /** Present once a conversion has run. */
+  mode?: ConversionMode
+  convertedAt?: number
+  /**
+   * True when the vision pass completed for this document. This flag — not a
+   * UI checkbox — is what stops a second analysis run: the recorded provider
+   * and descriptions are already in `meta.json`.
+   */
+  imageAnalyzed?: boolean
+  /** Provider used for the vision pass, recorded so re-runs stay consistent. */
+  visionProvider?: AiProviderId
+  /** Chunks this document contributed to the last index build. */
+  chunkCount?: number
+  /** Failure reason from the last attempt. Present when status is `failed`. */
+  error?: string
+  /** True when the converted markdown is on disk (regardless of staleness). */
+  convertedExists: boolean
+}
+
+/** State of the retrieval index, read from `.index/meta.json`. */
+export interface IndexStatus {
+  built: boolean
+  documentCount: number
+  chunkCount: number
+  dimensions: number
+  /** Embedding model the vectors were produced with. */
+  model: string | null
+  builtAt: number | null
+}
+
+export interface ResearchScanResult {
+  /** True when `<project_root>/docs` exists. */
+  docsDirExists: boolean
+  /**
+   * Where the documents were read from. `docs` is the intended layout; `root`
+   * is the fallback used when there is no `docs/` folder, so that opening a
+   * folder full of PDFs does not report an empty project.
+   */
+  sourceDir: 'docs' | 'root'
+  documents: DocumentEntry[]
+  index: IndexStatus
+}
+
+/**
+ * Which extractor converts a PDF.
+ *
+ *   - `auto`    — Marker, falling back to the fast extractor when Marker is
+ *                 missing or when the machine kills its worker. Best layout
+ *                 fidelity, and the slowest option on CPU: a 40-page paper is
+ *                 minutes.
+ *   - `fast`    — pdftext/pypdfium2. Seconds per paper, no layout model, so
+ *                 two-column papers come out interleaved and figures are left
+ *                 out entirely.
+ *   - `webchat` — extract raw text now, then hand it to a chat model to
+ *                 rewrite as markdown: figures described from their captions,
+ *                 chart and table data rebuilt as markdown tables. Runs
+ *                 through the same web-chat bridge as "Send to web chat", so
+ *                 it needs no API key — and because the rewrite is a chat
+ *                 turn, its result comes back through the AI Response panel
+ *                 and is written from there (see `ResearchPromptMode`
+ *                 `rewrite`).
+ */
+export type ExtractionEngine = 'auto' | 'fast' | 'webchat'
+
+export interface ConvertRequest {
+  projectRoot: string
+  /** `docs/`-relative paths to convert. Empty means "every document". */
+  docPaths: string[]
+  mode: ConversionMode
+  /** Extractor to run. Defaults to `auto`. */
+  engine?: ExtractionEngine
+  /** Vision provider for `text-images`. Ignored for `text`. */
+  visionProvider?: AiProviderId
+}
+
+/** One progress tick per stage per document. */
+export interface ConvertProgress {
+  path: string
+  /** 1-based position of this document in the batch. */
+  index: number
+  total: number
+  /**
+   * `chatting` is the `webchat` engine's long step: the document is attached
+   * to a chat site and the reply is awaited, which takes as long as the model
+   * takes.
+   */
+  stage: 'extracting' | 'images' | 'saving' | 'chatting'
+  message: string
+}
+
+export interface ConvertResult {
+  documents: DocumentEntry[]
+  /**
+   * Documents that failed, with the reason. A failed document is reported
+   * here and recorded in the state file — it is never dropped from the list.
+   */
+  failed: { path: string; error: string }[]
+  /** True when the user cancelled before the batch finished. */
+  cancelled: boolean
+}
+
+export interface IndexBuildRequest {
+  projectRoot: string
+  /** Documents to index. Empty means "every converted document". */
+  docPaths: string[]
+}
+
+export interface IndexBuildProgress {
+  stage: 'chunking' | 'embedding' | 'saving'
+  done: number
+  total: number
+  message: string
+}
+
+export interface IndexBuildResult {
+  index: IndexStatus
+  /** Documents skipped because they have no converted markdown yet. */
+  skipped: string[]
+}
+
+/**
+ * Which research prompt to build.
+ *
+ *   - `full` — every converted document inlined. Simple, expensive, and the
+ *              right answer for a handful of short papers.
+ *   - `rag`  — question-driven retrieval: the question, one abstract per
+ *              source document, then the top-ranked excerpts with a citation
+ *              header on each.
+ */
+export type ResearchPromptMode = 'full' | 'rag'
+
+export interface ResearchPromptRequest {
+  projectRoot: string
+  mode: ResearchPromptMode
+  /** Documents to include. Empty means "every converted document". */
+  docPaths: string[]
+  /** Required for `rag`. */
+  question?: string
+  /** Excerpts kept after retrieval. Defaults to 8. */
+  topK?: number
+  /**
+   * Ask the chat provider to re-rank the retrieved candidates. Costs one
+   * extra call and helps when the embedding model returns near-ties.
+   */
+  rerank?: boolean
+}
+
+export interface ResearchCitation {
+  document: string
+  heading: string
+}
+
+export interface ResearchPromptResult {
+  prompt: string
+  tokenCount: number
+  documentCount: number
+  /** Excerpts included. Zero for `full`. */
+  chunkCount: number
+  /** Titles of the documents that went in, in prompt order. */
+  documents: string[]
+  citations: ResearchCitation[]
+  /** Documents that could not be read; reported, never silently dropped. */
+  unreadable: string[]
+}
+
+export interface ResearchCancelRequest {
+  projectRoot: string
 }

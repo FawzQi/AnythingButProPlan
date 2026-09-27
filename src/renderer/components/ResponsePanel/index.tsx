@@ -147,7 +147,7 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder="Paste the AI response here, or use Send to web chat on the Prompt tab to fill this in automatically."
+          placeholder="Paste the AI response here, or use Send to web chat to fill it in."
           spellCheck={false}
           className="h-40 shrink-0 resize-y border-b border-[#2c3038] bg-[#12141a] p-3 font-mono text-xs text-slate-200 outline-none"
         />

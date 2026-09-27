@@ -153,15 +153,68 @@ export function resolveWithinRoot(root: string, relativePath: string): string {
   return absolute;
 }
 
-async function loadGitignore(root: string): Promise<Ignore> {
+/**
+ * One `.gitignore` loaded from disk, together with the project-relative
+ * directory it lives in. Gitignore patterns are interpreted relative to
+ * their own file's location — a pattern `dist/` in `packages/foo/.gitignore`
+ * means `packages/foo/dist/`, not the repository's top-level `dist/` — so
+ * each nested file gets its own matcher and its own base path.
+ */
+interface IgnoreMatcher {
+  /** Project-relative POSIX directory holding the .gitignore; '' for root. */
+  base: string;
+  matcher: Ignore;
+}
+
+/**
+ * Load `<dir>/.gitignore` if it exists and return a matcher scoped to that
+ * directory. A missing file is normal, not an error — most directories have
+ * no `.gitignore` of their own.
+ */
+async function loadGitignoreAt(
+  absoluteDir: string,
+  base: string,
+): Promise<IgnoreMatcher | null> {
   const matcher = ignore();
   try {
-    const contents = await fs.readFile(path.join(root, ".gitignore"), "utf8");
+    const contents = await fs.readFile(
+      path.join(absoluteDir, ".gitignore"),
+      "utf8",
+    );
     matcher.add(contents);
+    return { base, matcher };
   } catch {
-    // No .gitignore is normal, not an error.
+    return null;
   }
-  return matcher;
+}
+
+/**
+ * True when `posixRelative` is ignored by any of the loaded matchers.
+ *
+ * Each matcher only governs paths beneath its own base directory, so the
+ * path handed to `Ignore.ignores` is recomputed relative to that base.
+ * Directories are tested with a trailing slash so directory-only patterns
+ * (`build/`) match them, while file-only patterns are not tricked into
+ * matching a directory of the same name.
+ */
+function isIgnored(
+  matchers: IgnoreMatcher[],
+  posixRelative: string,
+  isDirectory: boolean,
+): boolean {
+  for (const { base, matcher } of matchers) {
+    let rel: string;
+    if (base === "") {
+      rel = posixRelative;
+    } else if (posixRelative.startsWith(`${base}/`)) {
+      rel = posixRelative.slice(base.length + 1);
+    } else {
+      continue;
+    }
+    if (rel === "") continue;
+    if (matcher.ignores(isDirectory ? `${rel}/` : rel)) return true;
+  }
+  return false;
 }
 
 export async function isBinaryFile(absolutePath: string): Promise<boolean> {
@@ -182,7 +235,6 @@ export async function isBinaryFile(absolutePath: string): Promise<boolean> {
 
 interface WalkState {
   root: string;
-  matcher: Ignore;
   fileCount: number;
   skippedCount: number;
 }
@@ -190,8 +242,17 @@ interface WalkState {
 async function walk(
   absoluteDir: string,
   relativeDir: string,
+  inheritedMatchers: IgnoreMatcher[],
   state: WalkState,
 ): Promise<FileNode[]> {
+  // A `.gitignore` in this directory applies to this directory and every
+  // descendant, so it is loaded once here and threaded through the recursion
+  // rather than being re-read at every level.
+  const ownMatcher = await loadGitignoreAt(absoluteDir, relativeDir);
+  const matchers = ownMatcher
+    ? [...inheritedMatchers, ownMatcher]
+    : inheritedMatchers;
+
   let entries: import("node:fs").Dirent[];
   try {
     entries = await fs.readdir(absoluteDir, { withFileTypes: true });
@@ -216,12 +277,12 @@ async function walk(
     if (entry.isDirectory()) {
       if (
         ALWAYS_SKIP.has(entry.name) ||
-        state.matcher.ignores(`${posixRelative}/`)
+        isIgnored(matchers, posixRelative, true)
       ) {
         state.skippedCount += 1;
         continue;
       }
-      const children = await walk(absolute, relative, state);
+      const children = await walk(absolute, relative, matchers, state);
       if (children.length === 0) continue;
       directories.push({
         id: posixRelative,
@@ -236,7 +297,10 @@ async function walk(
     }
 
     if (!entry.isFile()) continue;
-    if (ALWAYS_SKIP.has(entry.name) || state.matcher.ignores(posixRelative)) {
+    if (
+      ALWAYS_SKIP.has(entry.name) ||
+      isIgnored(matchers, posixRelative, false)
+    ) {
       state.skippedCount += 1;
       continue;
     }
@@ -280,14 +344,12 @@ async function walk(
 /** Recursively scan a project root, honouring .gitignore and the skip list. */
 export async function scanDirectory(root: string): Promise<ScanResult> {
   const absoluteRoot = path.resolve(root);
-  const matcher = await loadGitignore(absoluteRoot);
   const state: WalkState = {
     root: absoluteRoot,
-    matcher,
     fileCount: 0,
     skippedCount: 0,
   };
-  const children = await walk(absoluteRoot, "", state);
+  const children = await walk(absoluteRoot, "", [], state);
 
   return {
     root: absoluteRoot,

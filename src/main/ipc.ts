@@ -3,11 +3,23 @@ import { BrowserWindow, clipboard, dialog, ipcMain } from "electron";
 import { countTokens } from "gpt-tokenizer";
 import { IpcChannel } from "@shared/ipc-channels";
 import type {
+  AiProviderId,
   AiSettings,
   AiSettingsSaveRequest,
   AiSuggestion,
   AiSuggestRequest,
   ApplyFileInput,
+  ConversionMode,
+  ConvertRequest,
+  ExtractionEngine,
+  ConvertResult,
+  DocumentEntry,
+  IndexBuildRequest,
+  IndexBuildResult,
+  ResearchCancelRequest,
+  ResearchPromptRequest,
+  ResearchPromptResult,
+  ResearchScanResult,
   ApplyRequest,
   ApplyResult,
   ConfirmDialogRequest,
@@ -42,6 +54,15 @@ import {
   writeFile,
   deleteFile,
 } from "./services/fs-service";
+import { convertDocuments } from "./services/document-converter";
+import {
+  ensureGitignore,
+  scanDocuments,
+} from "./services/document-scanner";
+import { buildIndex } from "./services/research-index";
+import { buildResearchPrompt } from "./services/research-prompt";
+import { clearCancel, requestCancel } from "./services/cancellation";
+import { DEFAULT_VISION_PROVIDER, VISION_PROVIDERS } from "@shared/vision-providers";
 import {
   commitChanges,
   discardAllFiles,
@@ -61,6 +82,7 @@ import { measureMapTokens } from "./services/file-selector";
 import {
   suggestFilesGitNexusOnly,
   suggestFilesGitNexusJev,
+  suggestFilesGitNexusLlm,
 } from "./services/gitnexus-selector";
 import { discoverModels, listProviders } from "./services/ai-providers";
 import {
@@ -69,6 +91,42 @@ import {
   openWebChat,
   sendToWebChat,
 } from "./services/web-chat";
+
+/**
+ * Vision provider ids arrive from the renderer's picker, so they are checked
+ * against the shared catalogue rather than trusted. An unknown value falls
+ * back to the default instead of throwing: the picker is the only caller, and
+ * a stale renderer bundle carrying a provider this build removed should not
+ * fail a conversion the user asked for.
+ */
+function requireVisionProvider(
+  value: unknown,
+): DocumentEntry["visionProvider"] {
+  const ids = VISION_PROVIDERS.map((option) => option.id);
+  return ids.includes(value as AiProviderId)
+    ? (value as AiProviderId)
+    : DEFAULT_VISION_PROVIDER;
+}
+
+/**
+ * A string field that is allowed to be empty.
+ *
+ * `requireString` answers "is this a usable value?", which is the wrong
+ * question for an optional field: a whole-document build has no question, and
+ * the renderer sends `question: ""` for it rather than omitting the key.
+ * Rejecting that turned a valid full-document build into
+ * `Invalid question: expected a non-empty string.` The requirement that a RAG
+ * build *has* a question is a rule about the mode, not about the field's
+ * type — it belongs where the mode is known, and it is checked in
+ * `buildResearchPrompt`.
+ */
+function optionalString(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(`Invalid ${label}: expected a string.`);
+  }
+  return value;
+}
 
 function requireString(value: unknown, label: string): string {
   if (typeof value !== "string" || value === "") {
@@ -240,6 +298,7 @@ export function registerIpcHandlers(): void {
         apiKey: typed?.apiKey,
         suggestMethod: typed?.suggestMethod,
         webChatTarget: typed?.webChatTarget,
+        mode: typed?.mode,
       });
     },
   );
@@ -302,6 +361,16 @@ export function registerIpcHandlers(): void {
         // Talks to TypeSafe, not to a chat provider. The selector reads
         // the TypeSafe key itself and raises a targeted error if missing.
         return suggestFilesGitNexusJev(normalised);
+      }
+      if (method === "gitnexus-llm") {
+        // Talks to whichever chat provider the user selected in Settings.
+        // The provider id on the result is the one that was actually
+        // called, not a display placeholder — this path makes a real
+        // outbound request.
+        return suggestFilesGitNexusLlm(
+          normalised,
+          settings.provider ?? "deepseek",
+        );
       }
       // Unreachable given the `SuggestMethod` union, but keeping the
       // exhaustive check here means a future addition to the union fails
@@ -498,6 +567,137 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.WebChatCancel, async (): Promise<void> => {
     cancelWebChat();
   });
+
+  /* ---------------------------------------------------------------------- *
+   * Research mode
+   * ---------------------------------------------------------------------- */
+
+  ipcMain.handle(
+    IpcChannel.ResearchScan,
+    async (_event, root: unknown): Promise<ResearchScanResult> => {
+      const projectRoot = requireString(root, "projectRoot");
+      // Phase 9 housekeeping runs here rather than at conversion time: this
+      // is the first call that proves the folder is a research project (it
+      // has a docs/ directory), and doing it on open means `converted/` is
+      // ignored before anything writes into it.
+      const scan = await scanDocuments(projectRoot);
+      if (scan.docsDirExists || scan.sourceDir === "root") {
+        try {
+          await ensureGitignore(projectRoot);
+        } catch (error) {
+          // A read-only project is not a reason to fail the scan.
+          console.warn("Could not update .gitignore:", String(error));
+        }
+      }
+      return scan;
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.ResearchConvert,
+    async (event, request: unknown): Promise<ConvertResult> => {
+      const typed = request as ConvertRequest;
+      const projectRoot = requireString(typed?.projectRoot, "projectRoot");
+      const mode: ConversionMode =
+        typed?.mode === "text-images" ? "text-images" : "text";
+      const engine: ExtractionEngine =
+        typed?.engine === "fast"
+          ? "fast"
+          : typed?.engine === "webchat"
+            ? "webchat"
+            : "auto";
+      const visionProvider = requireVisionProvider(typed?.visionProvider);
+
+      // Read once, before the long job starts: `webchat` needs the chat site,
+      // and re-reading the settings file mid-conversion would let a settings
+      // change halfway through send the second document to a different site
+      // than the first.
+      const settings = await getSettings();
+
+      // The flag is cleared before the job starts so a cancel left over from
+      // a previous run — the user pressed Cancel and the job had already
+      // finished — does not abort this one at document 1.
+      clearCancel(projectRoot);
+      const sender = event.sender;
+      return convertDocuments({
+        projectRoot,
+        docPaths: (typed?.docPaths ?? []).map((p) =>
+          requireString(p, "document path"),
+        ),
+        mode,
+        engine,
+        // The chat site comes from Settings (`webChatTarget`), the same one
+        // the "Send to web chat" button uses. Passing it in rather than
+        // reading it inside the converter keeps the converter free of the
+        // settings module and makes the engine's dependency explicit.
+        webChatTarget: settings.webChatTarget,
+        visionProviderId: visionProvider,
+        onProgress: (progress) => {
+          // The renderer may have closed the window while a conversion was
+          // running; a send to a destroyed webContents throws.
+          if (!sender.isDestroyed()) {
+            sender.send(IpcChannel.ResearchConvertProgress, progress);
+          }
+        },
+      });
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.ResearchBuildIndex,
+    async (event, request: unknown): Promise<IndexBuildResult> => {
+      const typed = request as IndexBuildRequest;
+      const projectRoot = requireString(typed?.projectRoot, "projectRoot");
+      clearCancel(projectRoot);
+      const sender = event.sender;
+      const result = await buildIndex({
+        projectRoot,
+        docPaths: (typed?.docPaths ?? []).map((p) =>
+          requireString(p, "document path"),
+        ),
+        onProgress: (progress) => {
+          if (!sender.isDestroyed()) {
+            sender.send(IpcChannel.ResearchIndexProgress, progress);
+          }
+        },
+      });
+      return { index: result.index, skipped: result.skipped };
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.ResearchBuildPrompt,
+    async (_event, request: unknown): Promise<ResearchPromptResult> => {
+      const typed = request as ResearchPromptRequest;
+      const projectRoot = requireString(typed?.projectRoot, "projectRoot");
+      const mode = typed?.mode === "rag" ? "rag" : "full";
+      const topK = typed?.topK;
+      if (
+        topK !== undefined &&
+        (!Number.isInteger(topK) || topK < 1 || topK > 50)
+      ) {
+        throw new Error(`topK must be an integer between 1 and 50.`);
+      }
+      return buildResearchPrompt({
+        projectRoot,
+        mode,
+        docPaths: (typed?.docPaths ?? []).map((p) =>
+          requireString(p, "document path"),
+        ),
+        question: optionalString(typed?.question, "question"),
+        topK,
+        rerank: typed?.rerank === true,
+      });
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.ResearchCancel,
+    async (_event, request: unknown): Promise<void> => {
+      const typed = request as ResearchCancelRequest;
+      requestCancel(requireString(typed?.projectRoot, "projectRoot"));
+    },
+  );
 
   /* ---------------------------------------------------------------------- *
    * Git source control

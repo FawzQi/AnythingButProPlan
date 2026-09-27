@@ -34,6 +34,17 @@ export const IpcChannel = {
   WebChatSend: 'webchat:send',
   WebChatOpen: 'webchat:open',
   WebChatCancel: 'webchat:cancel',
+  ResearchScan: 'research:scan',
+  ResearchConvert: 'research:convert',
+  ResearchConvertProgress: 'research:convert-progress',
+  ResearchBuildIndex: 'research:index-build',
+  ResearchIndexProgress: 'research:index-progress',
+  ResearchBuildPrompt: 'research:build-prompt',
+  // One cancel channel for both long research jobs. The flag lives per
+  // project under one key, so a conversion and an index build started in the
+  // same project cannot be cancelled independently — starting the second
+  // clears the flag the first would have read. See `cancellation.ts`.
+  ResearchCancel: 'research:cancel',
 } as const
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel]

@@ -16,11 +16,12 @@ import {
 } from './semantic-index'
 import { resolveWithinRoot } from './fs-service'
 import { scoreCandidatesWithJev } from './jev'
+import { rankCandidatesWithLlm } from './llm-ranker'
 
 /**
  * GitNexus-driven file suggestion.
  *
- * Two pipelines share the same recall front half — GitNexus graph queries
+ * Three pipelines share the same recall front half — GitNexus graph queries
  * and a local BM25 index over a shallow per-file preview, merged and
  * reranked by git recency and co-change locality. They differ only in how
  * the surviving candidates become the final answer:
@@ -31,6 +32,14 @@ import { scoreCandidatesWithJev } from './jev'
  *                     model, on a 0–3 relevance scale. The calibrated
  *                     scores and confidences are routed into include /
  *                     flag-for-review / drop.
+ *   `gitnexus-llm`  — each candidate is rated by an ordinary chat model
+ *                     (DeepSeek, Groq, OpenRouter, Google AI Studio) on the
+ *                     same 0–3 scale. The ratings and the model's
+ *                     self-reported confidence are routed identically. This
+ *                     exists so the precision pass is available to users
+ *                     with a chat-provider key but no TypeSafe key, and so
+ *                     a general model's ranking can be compared against
+ *                     Jev's on the same project.
  *
  * The recall half is entirely local. `queryGitNexus` shells out to the
  * user-installed `gitnexus` CLI; when that tool is missing the hybrid
@@ -156,7 +165,7 @@ async function buildShallowIndex(
 }
 
 /* ------------------------------------------------------------------ *
- * Shared pipeline — used by both variants
+ * Shared pipeline — used by all variants
  * ------------------------------------------------------------------ */
 
 interface GitContext {
@@ -166,8 +175,8 @@ interface GitContext {
 
 /**
  * Read the last `MAX_COMMITS` commits and flatten them into a single
- * most-recent-first file list, capped at `MAX_RECENT_FILES`. Both variants
- * of the pipeline feed this list to the reranker as the "recent" boost
+ * most-recent-first file list, capped at `MAX_RECENT_FILES`. Every variant
+ * of the pipeline feeds this list to the reranker as the "recent" boost
  * signal.
  */
 async function readGitContext(
@@ -554,6 +563,203 @@ export async function suggestFilesGitNexusJev(
     jevDropped: dropped,
     jevBatchCount: jev.batches,
     jevTokens: jev.tokens,
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * LLM variant — local recall, chat-model precision
+ * ------------------------------------------------------------------ */
+
+/**
+ * Same recall front half as the other two variants, but the surviving
+ * candidates are rated by an ordinary chat completion instead of Jev. The
+ * rubric is the same 0–3 scale, and the same threshold table routes the
+ * ratings into include / flag / drop.
+ *
+ * The difference from the Jev path is the confidence source. Jev returns a
+ * calibrated probability; a chat model returns a self-reported number that
+ * is best treated as a rough signal. The confidence floor is therefore
+ * applied the same way but the UI labels the results as coming from the
+ * chat provider, so a user comparing the two methods can see which one
+ * produced a given verdict.
+ *
+ * Errors are surfaced rather than swallowed: a missing key, an
+ * authentication failure, or a provider that refuses the request all need
+ * to reach the user with enough context to fix them, and the only way to
+ * do that is to let the error propagate up to the IPC handler.
+ */
+export async function suggestFilesGitNexusLlm(
+  request: AiSuggestRequest,
+  providerId: AiProviderId,
+): Promise<AiSuggestion> {
+  const started = Date.now()
+  const known = new Set(request.filePaths)
+
+  // --- Context ingestion ------------------------------------------------
+  const { history, recentFiles } = await readGitContext(
+    request.projectRoot,
+    known,
+  )
+
+  // --- Local keyword extraction ----------------------------------------
+  const terms = tokenize(request.instruction)
+  if (terms.length === 0) terms.push(request.instruction)
+
+  // --- Hybrid recall ---------------------------------------------------
+  const { gitnexusHits, bm25Hits, gitnexusMissing } = await hybridSearch(
+    request.projectRoot,
+    request.filePaths,
+    terms,
+  )
+
+  const candidates = aggregateCandidates({
+    gitnexusHits,
+    bm25Hits,
+    history,
+    recentFiles,
+    known,
+  })
+
+  if (candidates.length === 0) {
+    return {
+      paths: [],
+      purposes: {},
+      provider: providerId,
+      model: '',
+      mapTokens: 0,
+      outputTokens: 0,
+      durationMs: Date.now() - started,
+      hallucinated: [],
+      method: 'gitnexus-llm',
+      candidateCount: 0,
+      gitnexusMissing,
+      jevScores: {},
+      jevConfidence: {},
+      jevIncluded: [],
+      jevFlagged: [],
+      jevDropped: [],
+    }
+  }
+
+  // --- Skeleton for the surviving candidates ---------------------------
+  const candidatePaths = candidates.map((candidate) => candidate.path)
+  const map = await buildCodebaseMap(request.projectRoot, candidatePaths)
+  const skeletonByPath = splitSkeletonMap(map.text)
+
+  // --- Chat-model precision --------------------------------------------
+  const apiKey = await getApiKey(providerId)
+  if (!apiKey) {
+    throw new Error(
+      `No API key saved for ${providerId}. Add one in the Settings tab to ` +
+        `use the "GitNexus + LLM" suggestion method.`,
+    )
+  }
+  const model = await resolveModel(
+    providerId,
+    getDefaultModel(providerId),
+  )
+
+  const ranked = await rankCandidatesWithLlm({
+    apiKey,
+    provider: providerId,
+    model,
+    instruction: request.instruction,
+    candidates: candidates.map((candidate) => ({
+      path: candidate.path,
+      skeleton: skeletonByPath.get(candidate.path) ?? candidate.path,
+    })),
+  })
+
+  // --- Routing ---------------------------------------------------------
+  // The routing rule is shared with the Jev path — same thresholds, same
+  // three buckets — because the LLM is asked for the same 0–3 rating on
+  // the same rubric. The only difference the UI needs to know about is
+  // that the confidence came from the model itself, which it can infer
+  // from `method === 'gitnexus-llm'`.
+  const scoresByPath: Record<string, number> = {}
+  const confidenceByPath: Record<string, number> = {}
+  const reasonsByPath = new Map(
+    candidates.map((candidate) => [candidate.path, candidate.reasons]),
+  )
+  const included: string[] = []
+  const flagged: string[] = []
+  const dropped: string[] = []
+  const purposes: Record<string, string> = {}
+
+  const formatReason = (path: string): string => {
+    const reasons = reasonsByPath.get(path) ?? []
+    return reasons.length > 0 ? ` — ${reasons.join(', ')}` : ''
+  }
+
+  for (const verdict of ranked.verdicts) {
+    scoresByPath[verdict.path] = verdict.score
+    confidenceByPath[verdict.path] = verdict.confidence
+    const confidencePct = Math.round(verdict.confidence * 100)
+    const llmNote =
+      verdict.reason !== undefined ? `, "${verdict.reason}"` : ''
+
+    const isInclude =
+      verdict.score >= JEV_INCLUDE_SCORE &&
+      verdict.confidence >= JEV_HIGH_CONFIDENCE
+
+    if (isInclude) {
+      included.push(verdict.path)
+      purposes[verdict.path] =
+        `LLM ${verdict.score}/3, ${confidencePct}% confident${llmNote}` +
+        formatReason(verdict.path)
+      continue
+    }
+
+    if (verdict.score >= JEV_REVIEW_SCORE) {
+      flagged.push(verdict.path)
+      purposes[verdict.path] =
+        `LLM ${verdict.score}/3, ${confidencePct}% confident — review${llmNote}` +
+        formatReason(verdict.path)
+      continue
+    }
+
+    dropped.push(verdict.path)
+  }
+
+  const orderedPaths = [...included, ...flagged]
+
+  return {
+    paths: orderedPaths,
+    purposes,
+    provider: providerId,
+    model,
+    mapTokens: countTokens(map.text),
+    outputTokens: ranked.outputTokens,
+    durationMs: Date.now() - started,
+    hallucinated: [],
+    method: 'gitnexus-llm',
+    candidateCount: candidates.length,
+    gitnexusMissing,
+    jevScores: scoresByPath,
+    jevConfidence: confidenceByPath,
+    jevIncluded: included,
+    jevFlagged: flagged,
+    jevDropped: dropped,
+  }
+}
+
+/**
+ * Fallback model for a chat provider when the user has not picked one. The
+ * catalogue is the same seed list the provider exposes in Settings; using
+ * the first entry here keeps the two from drifting when a name is retired.
+ */
+function getDefaultModel(providerId: AiProviderId): string {
+  switch (providerId) {
+    case 'deepseek':
+      return 'deepseek-flash'
+    case 'groq':
+      return 'llama-3.3-70b-versatile'
+    case 'openrouter':
+      return 'z-ai/glm-5.2:free'
+    case 'google':
+      return 'gemini-3.5-flash'
+    default:
+      return ''
   }
 }
 

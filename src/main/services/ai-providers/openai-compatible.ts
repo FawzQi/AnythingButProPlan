@@ -1,5 +1,5 @@
 import type { AiProviderId } from '@shared/types'
-import type { AiProvider, CompleteInput } from './types'
+import type { AiProvider, CompleteInput, VisionInput } from './types'
 import { describeFetchError, httpFetch } from './http'
 
 /**
@@ -178,6 +178,79 @@ export function makeOpenAiCompatibleProvider(
           )
         }
         throw new Error(`${options.label} returned an empty response.`)
+      }
+      return content
+    },
+    /**
+     * Vision on the OpenAI shape: the user message's `content` becomes an
+     * array of parts, one `text` part for the instruction and one
+     * `image_url` part per image, each holding a base64 data URI.
+     *
+     * `detail: 'high'` is set explicitly. The default is `auto`, which lets
+     * the vendor downscale — and a downscaled chart axis is exactly the
+     * content this pass exists to read.
+     */
+    async completeVision(input: VisionInput): Promise<string> {
+      const requested = input.maxTokens ?? 1024
+      const maxTokens = isReasoningModel(input.model)
+        ? Math.max(requested * 4, 4096)
+        : requested
+
+      const body = {
+        model: input.model,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: input.prompt },
+              ...input.images.map((image) => ({
+                type: 'image_url',
+                image_url: {
+                  url: `data:${image.mimeType};base64,${image.base64}`,
+                  detail: 'high',
+                },
+              })),
+            ],
+          },
+        ],
+        max_tokens: maxTokens,
+        temperature: 0.1,
+        stream: false,
+      }
+
+      let response: Response
+      try {
+        response = await httpFetch(options.baseUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${input.apiKey}`,
+            ...(options.extraHeaders ?? {}),
+          },
+          body: JSON.stringify(body),
+        })
+      } catch (error) {
+        throw new Error(describeFetchError(options.label, error), {
+          cause: error,
+        })
+      }
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '')
+        throw new Error(
+          `${options.label} returned ${response.status}: ${
+            detail.slice(0, 300) || response.statusText
+          }`,
+        )
+      }
+      const json = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>
+      }
+      const content = json.choices?.[0]?.message?.content
+      if (typeof content !== 'string' || content === '') {
+        throw new Error(
+          `${options.label} returned no description for the image batch. ` +
+            `If this model does not accept images, pick a vision model in the conversion panel.`,
+        )
       }
       return content
     },

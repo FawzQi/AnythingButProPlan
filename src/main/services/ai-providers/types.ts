@@ -9,6 +9,28 @@ export interface CompleteInput {
   temperature?: number
 }
 
+export interface VisionInput {
+  apiKey: string
+  model: string
+  /** Instruction for the model; the images travel alongside it. */
+  prompt: string
+  /**
+   * Base64 payloads, no data-URI prefix. Callers read the bytes and hand
+   * them over — the provider is the only layer that knows whether its wire
+   * format wants `inlineData` or a `data:` URL, and neither should be
+   * assembled anywhere else.
+   */
+  images: { mimeType: string; base64: string }[]
+  maxTokens?: number
+}
+
+export interface EmbedInput {
+  apiKey: string
+  model: string
+  /** Texts to embed, in order. The result is aligned with this array. */
+  texts: string[]
+}
+
 export interface AiProvider {
   id: AiProviderId
   label: string
@@ -30,4 +52,19 @@ export interface AiProvider {
    * because not every vendor exposes an equivalent endpoint.
    */
   listModels?(apiKey: string): Promise<string[]>
+  /**
+   * Describe one or more images alongside a text prompt. Implemented by the
+   * providers that accept images on their chat endpoint; absent everywhere
+   * else, which is why the research mode's figure pass checks for it before
+   * offering a provider in the picker.
+   */
+  completeVision?(input: VisionInput): Promise<string>
+  /**
+   * Embed a batch of texts. Google is the only provider here with an
+   * embedding endpoint, and research mode deliberately does not grow a
+   * second one: switching embedding models invalidates every stored vector,
+   * so a second provider would mean a full re-embed of the corpus for no
+   * user-visible gain at the 20–200 document scale this app targets.
+   */
+  embed?(input: EmbedInput): Promise<number[][]>
 }

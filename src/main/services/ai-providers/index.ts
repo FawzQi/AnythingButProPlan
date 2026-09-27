@@ -8,7 +8,7 @@ const deepseek = makeOpenAiCompatibleProvider({
   id: "deepseek",
   label: "DeepSeek",
   keyUrl: "https://platform.deepseek.com/api_keys",
-  models: ["deepseek-chat", "deepseek-v4-flash", "deepseek-v4-pro"],
+  models: ["deepseek-flash"],
   baseUrl: "https://api.deepseek.com/chat/completions",
 });
 

@@ -1,0 +1,46 @@
+# Research Question
+
+{{{question}}}
+
+## Source Documents
+
+One abstract per document the excerpts below were drawn from. The abstracts
+are here so the excerpts make sense — an excerpt from the middle of a paper
+refers to concepts the abstract names. Read these first.
+
+{{#each documents}}### {{name}}
+
+{{{abstract}}}
+
+{{/each}}
+
+## Retrieved Excerpts
+
+The {{chunkCount}} excerpts below were retrieved as the passages most likely to
+answer the question. They are not the whole documents, and they may overlap or
+leave gaps. Each one is labelled with the document and section it came from.
+
+{{#each excerpts}}### Excerpt {{number}} — {{document}}, "{{heading}}"
+
+{{{text}}}
+
+{{/each}}
+
+## Output Instructions
+
+Answer the question using the excerpts above, in prose. Lead with the answer, then the evidence.
+
+### Citing sources
+
+Cite the excerpt labels you used, in this form:
+
+- `paper-a.pdf, "3 Methodology > 3.2 Data Collection"` — the document and the section heading, copied exactly as it appears on the excerpt.
+
+A claim drawn from two documents gets two citations. A claim drawn from an abstract rather than an excerpt is cited as `paper-a.pdf, abstract`.
+
+### What not to do
+
+- Do not invent citations, and do not cite a document you did not read in the excerpts above.
+- Do not treat the excerpts as complete. If they do not contain the answer, say what is missing — the reader can retrieve different passages.
+- If two excerpts disagree, present both with their citations instead of picking one.
+- Do not pad the answer with a summary of every excerpt. Use the ones that bear on the question and leave the rest.

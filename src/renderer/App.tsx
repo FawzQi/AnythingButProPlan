@@ -1,21 +1,57 @@
 import { useEffect } from "react";
 import type { ReactElement } from "react";
+import type { AppMode } from "@shared/types";
 import { useAppStore } from "./stores/app-store";
+import { subscribeResearchProgress } from "./stores/research-store";
+import { DocumentTree } from "./components/DocumentTree";
 import { FileTree } from "./components/FileTree";
 import { PromptDashboard } from "./components/PromptDashboard";
+import { ResearchDashboard } from "./components/ResearchDashboard";
 import { ResponsePanel } from "./components/ResponsePanel";
 import { useResizableWidth } from "./lib/hooks";
-import { Banner, ResizeHandle } from "./lib/ui";
+import { Banner, Button, ResizeHandle } from "./lib/ui";
+
+const MODES: { id: AppMode; label: string; title: string }[] = [
+  {
+    id: "coding",
+    label: "Coding",
+    title: "Source tree in, patch out",
+  },
+  {
+    id: "research",
+    label: "Research",
+    title: "Document set in, cited answer out",
+  },
+];
 
 export default function App(): ReactElement {
   const notice = useAppStore((state) => state.notice);
   const error = useAppStore((state) => state.error);
   const clearNotice = useAppStore((state) => state.clearNotice);
+  const mode = useAppStore((state) => state.aiSettings?.mode ?? "coding");
+  const loadAiSettings = useAppStore((state) => state.loadAiSettings);
+  const saveAiSettings = useAppStore((state) => state.saveAiSettings);
+  const openProject = useAppStore((state) => state.openProject);
+  const scanning = useAppStore((state) => state.scanning);
 
   // Left panel: the divider sits to its right, so dragging right grows it.
   const fileTree = useResizableWidth(420, { min: 180, max: 640, sign: 1 });
   // Right panel: the divider sits to its left, so dragging right shrinks it.
   const response = useResizableWidth(560, { min: 320, max: 960, sign: -1 });
+
+  // The mode lives in the persisted settings, and in research mode the
+  // settings panel that would otherwise load them is not mounted — so the
+  // load has to happen here, above the branch, or the toggle would always
+  // start on coding mode regardless of what was saved.
+  useEffect(() => {
+    void loadAiSettings();
+  }, [loadAiSettings]);
+
+  // Conversion and index progress arrive as main-process events. Subscribed
+  // here, above the mode branch, so a conversion started in research mode
+  // keeps updating its progress bar if the user flips to coding mode and
+  // back while it runs.
+  useEffect(() => subscribeResearchProgress(), []);
 
   useEffect(() => {
     if (!notice) return;
@@ -29,7 +65,54 @@ export default function App(): ReactElement {
         <h1 className="text-sm font-semibold text-slate-100">
           AnythingButProPlan
         </h1>
-        <span className="text-xs text-slate-500">codebase → prompt → code</span>
+        <span className="text-xs text-slate-500">
+          {mode === "research"
+            ? "documents → prompt → cited answer"
+            : "codebase → prompt → code"}
+        </span>
+        {/* One save per click: the mode is a field on the settings object,
+            so it goes through the same `aiSaveSettings` call as every other
+            field rather than a channel of its own. */}
+        <div
+          className="flex items-center gap-0.5 rounded border border-[#2c3038] p-0.5"
+          role="group"
+          aria-label="Mode"
+        >
+          {MODES.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              title={entry.title}
+              aria-pressed={mode === entry.id}
+              onClick={() => void saveAiSettings({ mode: entry.id })}
+              className={`rounded px-2 py-0.5 text-xs font-medium transition ${
+                mode === entry.id
+                  ? "bg-sky-600 text-white"
+                  : "text-slate-400 hover:bg-[#2a2f38] hover:text-slate-100"
+              }`}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </div>
+        {/* The Coding panel carries its own "Open folder" button inside the
+            FileTree. Research mode renders DocumentTree, which has no such
+            control, so the only way to select a project there would be to
+            switch to Coding, open the folder, and switch back. Surface a
+            header-level button so a folder can be opened without leaving
+            research mode. It calls the same app-store `openProject` action,
+            so both modes end up pointed at the same project root. */}
+        {mode === "research" ? (
+          <Button
+            variant="primary"
+            className="px-2 py-0.5 text-xs"
+            onClick={() => void openProject()}
+            disabled={scanning}
+            title="Open a project folder"
+          >
+            {scanning ? "Scanning…" : "Open folder"}
+          </Button>
+        ) : null}
         <div className="ml-auto flex items-center gap-2">
           {notice ? (
             <span className="text-xs text-emerald-400">{notice}</span>
@@ -43,12 +126,16 @@ export default function App(): ReactElement {
       </header>
 
       <main className="flex min-h-0 flex-1">
-        <FileTree width={fileTree.width} />
+        {mode === "research" ? (
+          <DocumentTree width={fileTree.width} />
+        ) : (
+          <FileTree width={fileTree.width} />
+        )}
         <ResizeHandle
           onMouseDown={fileTree.onMouseDown}
           label="Resize project panel"
         />
-        <PromptDashboard />
+        {mode === "research" ? <ResearchDashboard /> : <PromptDashboard />}
         <ResizeHandle
           onMouseDown={response.onMouseDown}
           label="Resize response panel"

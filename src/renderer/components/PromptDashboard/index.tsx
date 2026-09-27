@@ -175,7 +175,9 @@ function PromptTab(): ReactElement {
             title={
               aiSettings?.suggestMethod === "gitnexus-jev"
                 ? "Search locally, then rank with Jev (TypeSafe key)"
-                : "Search locally with GitNexus + BM25 — no AI call"
+                : aiSettings?.suggestMethod === "gitnexus-llm"
+                  ? "Search locally, then rank with the selected chat provider"
+                  : "Search locally with GitNexus + BM25 — no AI call"
             }
           >
             {aiSuggesting ? "Thinking…" : "✨ Suggest files"}
@@ -185,7 +187,7 @@ function PromptTab(): ReactElement {
           id="custom-prompt"
           value={customPrompt}
           onChange={(event) => setCustomPrompt(event.target.value)}
-          placeholder="Describe the change you want (e.g. 'add CSV export to the reports page'). Use ✨ Suggest files to have an AI pick the relevant files. When no prompt has been generated, this instruction is sent to the web chat on its own."
+          placeholder="Describe the change you want, or use ✨ Suggest files to pick relevant files."
           spellCheck={false}
           rows={3}
           className="w-full resize-y rounded border border-[#2c3038] bg-[#12141a] p-2 text-xs text-slate-200 outline-none focus:border-sky-600"
@@ -227,12 +229,20 @@ function PromptTab(): ReactElement {
                   {(aiLastSuggestion.jevDropped?.length ?? 0).toLocaleString()}{" "}
                   dropped) — {aiLastSuggestion.model}
                 </>
+              ) : aiLastSuggestion.method === "gitnexus-llm" ? (
+                <>
+                  via GitNexus recall + {aiLastSuggestion.provider} ranking (
+                  {(aiLastSuggestion.jevIncluded?.length ?? 0).toLocaleString()}{" "}
+                  included,{" "}
+                  {(aiLastSuggestion.jevFlagged?.length ?? 0).toLocaleString()}{" "}
+                  for review,{" "}
+                  {(aiLastSuggestion.jevDropped?.length ?? 0).toLocaleString()}{" "}
+                  dropped) — {aiLastSuggestion.model}
+                </>
               ) : (
                 <>
                   via {aiLastSuggestion.provider}/{aiLastSuggestion.model}
-                  {aiLastSuggestion.method === "gitnexus"
-                    ? ` (gitnexus: ${(aiLastSuggestion.candidateCount ?? 0).toLocaleString()} candidates)`
-                    : " (current: full map)"}
+                  {" (current: full map)"}
                 </>
               )}{" "}
               — {aiLastSuggestion.mapTokens.toLocaleString()} map tokens,{" "}

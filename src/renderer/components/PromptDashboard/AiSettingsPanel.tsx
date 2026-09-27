@@ -203,6 +203,38 @@ export function AiSettingsPanel(): ReactElement {
               </span>
             </span>
           </label>
+          <label className="flex cursor-pointer items-start gap-2 rounded border border-[#2c3038] px-3 py-2 text-xs transition hover:border-slate-500">
+            <input
+              type="radio"
+              name="suggest-method"
+              className="mt-0.5 size-3.5 shrink-0 accent-sky-500"
+              checked={settings.suggestMethod === "gitnexus-llm"}
+              onChange={() => void save({ suggestMethod: "gitnexus-llm" })}
+            />
+            <span>
+              <span className="block font-medium text-slate-200">
+                GitNexus + LLM — local recall, chat-model precision
+              </span>
+              <span className="block text-[11px] text-slate-500">
+                Same recall front half as the other two methods — GitNexus
+                graph queries, BM25 fallback, git-history reranking — but
+                the surviving candidates are rated by whichever{" "}
+                <strong>chat provider</strong> is selected above
+                (DeepSeek, Groq, OpenRouter, or Google AI Studio) on the
+                same 0–3 scale. Score 3 with ≥85% confidence is included;
+                score 2 is flagged for your review; 0–1 is dropped. The
+                confidence here is the model&rsquo;s own self-report, not a
+                calibrated probability, so treat the include bucket as a
+                strong hint rather than a guarantee. Use this when you
+                have a chat-provider key but no TypeSafe key, or to compare
+                a general model&rsquo;s ranking against Jev&rsquo;s on the same
+                project. Requires the{" "}
+                <code className="rounded bg-[#2a2f38] px-1">gitnexus</code>{" "}
+                CLI on your PATH for graph-query recall; without it only
+                BM25 recall runs.
+              </span>
+            </span>
+          </label>
         </div>
       </div>
 
