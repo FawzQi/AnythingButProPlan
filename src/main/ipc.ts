@@ -84,7 +84,10 @@ import {
   suggestFilesGitNexusJev,
   suggestFilesGitNexusLlm,
 } from "./services/gitnexus-selector";
-import { discoverModels, listProviders } from "./services/ai-providers";
+import {
+  discoverModels,
+  listProviders,
+} from "./services/ai-providers";
 import {
   cancelWebChat,
   listWebChatTargets,
@@ -600,6 +603,9 @@ export function registerIpcHandlers(): void {
       const projectRoot = requireString(typed?.projectRoot, "projectRoot");
       const mode: ConversionMode =
         typed?.mode === "text-images" ? "text-images" : "text";
+      // `auto` (the default) is Docling, run inside its own virtualenv.
+      // `fast` stays as the offline text extractor and `webchat` as the
+      // browser-driven one.
       const engine: ExtractionEngine =
         typed?.engine === "fast"
           ? "fast"
@@ -608,10 +614,11 @@ export function registerIpcHandlers(): void {
             : "auto";
       const visionProvider = requireVisionProvider(typed?.visionProvider);
 
-      // Read once, before the long job starts: `webchat` needs the chat site,
-      // and re-reading the settings file mid-conversion would let a settings
-      // change halfway through send the second document to a different site
-      // than the first.
+      // Read once, before the long job starts: `webchat` needs the chat site
+      // the user selected, and re-reading the settings file mid-conversion
+      // would let a settings change halfway through send the second document
+      // to a different destination than the first. Docling reads its venv
+      // path from the environment (DOCLING_VENV) rather than from Settings.
       const settings = await getSettings();
 
       // The flag is cleared before the job starts so a cancel left over from

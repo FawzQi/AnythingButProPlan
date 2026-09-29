@@ -32,30 +32,53 @@ import { resolveWithinRoot, writeFileEnsuringDir } from './fs-service'
 /**
  * Document → markdown conversion.
  *
- * Two extractors, in order:
+ * The `auto` engine (the default) runs the Docling CLI inside its own
+ * virtualenv. Docling applies a real layout model to each page on the GPU,
+ * so figures, charts and two-column layouts survive the conversion — the
+ * reason the old API engine existed — without sending the document to a
+ * third party, and without Marker's multi-GB model download and multi-minute
+ * CPU run. Docling embeds each extracted figure inline as base64; a Python
+ * wrapper (`docling_to_markdown.py`) turns those into real image files under
+ * the document's output folder before the vision pass runs, so `text-images`
+ * mode has files to describe with the API LLM.
  *
- *   1. Marker (`marker_single --disable_ocr`). Best fidelity on academic
- *      PDFs: it reconstructs headings, tables, and figure references. Runs on
- *      CPU by design — see the note on `--disable_ocr` below.
- *   2. PyMuPDF4LLM, via a bundled Python script, when Marker is not on PATH.
- *      Faster and much lighter, but it does not understand two-column
- *      layouts, which is exactly what most papers are. The caller surfaces a
- *      warning when this path is used so the user knows why a two-column
- *      paper came out interleaved.
+ * Two other engines remain:
  *
- * Markdown and text files skip both: they are already text, and running a PDF
- * extractor over them would only add failure modes.
+ *   - `fast` — a bundled Python script (pdftext, with a pypdfium2 fallback)
+ *     that runs entirely offline. Text-only, no figures, and two-column
+ *     papers come out interleaved. It is the fallback when Docling is not
+ *     installed and the offline path the user can pick deliberately.
  *
- * Images come out of the extractors themselves — Marker writes an `images/`
- * directory beside the markdown, and the Python fallback is invoked with
- * `write_images`. Nothing re-extracts them separately, because a second
- * extraction would not line up with the markdown's figure references.
+ *   - `webchat` — attaches the PDF to a web chat window and reads the reply
+ *     back from the site's own UI. Routed to `webchat-converter.ts` before
+ *     any of the local machinery runs.
+ *
+ * The `auto` engine value is kept as the name of "the default engine"; it
+ * now means Docling, not a chat API call.
  */
 
-/** Marker on a 40-page paper with two-column layout and tables. */
-const MARKER_TIMEOUT_MS = 10 * 60_000
+/** Docling loads a layout model; a hung run is minutes, not hours. */
+const DOCLING_TIMEOUT_MS = 10 * 60_000
+
 /** PyMuPDF4LLM is a pure text pass; anything near this means it hung. */
 const PYTHON_TIMEOUT_MS = 3 * 60_000
+
+/**
+ * Docling lives in its own virtualenv — it pulls torch and a layout model,
+ * which do not belong in the app's interpreter. The wrapper script is run
+ * with that venv's python, so `docling` sits beside it and the venv the app
+ * was pointed at is the venv that actually ran. Overridable so a machine
+ * where the venv lives elsewhere does not need a code change.
+ */
+const DOCLING_VENV = process.env.DOCLING_VENV ?? '/data/docling-env'
+
+/**
+ * Device Docling runs the layout model on. CUDA by default — the model is
+ * the whole reason this engine exists, and it is many times faster on a
+ * GPU. A machine without one can point this at `cpu` or `auto` without a
+ * code change.
+ */
+const DOCLING_DEVICE = process.env.DOCLING_DEVICE ?? 'cuda'
 
 interface RunResult {
   code: number | null
@@ -127,6 +150,14 @@ function pythonScriptPath(): string {
   return app.isPackaged ? packaged : dev
 }
 
+function doclingScriptPath(): string {
+  // Same layout rule as the fast extractor: the wrapper script travels with
+  // the app and is spawned from a real path outside the asar.
+  const packaged = path.join(process.resourcesPath ?? '', 'python', 'docling_to_markdown.py')
+  const dev = path.join(app.getAppPath(), 'resources', 'python', 'docling_to_markdown.py')
+  return app.isPackaged ? packaged : dev
+}
+
 async function exists(absolutePath: string): Promise<boolean> {
   try {
     await fs.stat(absolutePath)
@@ -188,7 +219,7 @@ interface Extraction {
   /** Warning to surface to the user, e.g. the fallback's layout caveat. */
   warning?: string
   /** Which extractor produced the markdown, recorded for reproducibility. */
-  extractor: 'marker' | 'fast' | 'passthrough'
+  extractor: 'docling' | 'fast' | 'passthrough'
 }
 
 /** Text files need no extraction; they are already markdown-ish. */
@@ -197,125 +228,6 @@ async function readPlainText(absolutePath: string): Promise<Extraction> {
     markdown: await fs.readFile(absolutePath, 'utf8'),
     imagesDir: null,
     extractor: 'passthrough',
-  }
-}
-
-/**
- * Flags the installed Marker understands, probed once per process from
- * `marker_single --help`.
- *
- * Marker's CLI changes between releases — flags appear, get renamed, and get
- * removed — and an unrecognised flag makes click exit with code 2 before any
- * conversion runs, which would turn "this Marker is a version older than the
- * code" into "every PDF fails". Probing costs one cheap `--help` call and
- * turns the failure mode into a slower conversion instead of a broken one.
- */
-let markerFlags: Set<string> | null = null
-
-async function supportedMarkerFlags(): Promise<Set<string>> {
-  if (markerFlags !== null) return markerFlags
-  const help = await run('marker_single', ['--help'], 20_000)
-  const flags = new Set<string>()
-  for (const match of help.stdout.matchAll(/(--[a-z0-9-]+)/g)) {
-    if (match[1] !== undefined) flags.add(match[1])
-  }
-  markerFlags = flags
-  return flags
-}
-
-/**
- * An error the machine produced rather than the document.
- *
- * These are the failures where retrying through a lighter extractor is the
- * right answer: the PDF is fine, the box ran out of memory or its worker was
- * killed. A PDF-level failure (malformed file, unsupported encryption) is not
- * in this list and is reported to the user verbatim, because falling back
- * would hide the real reason the document failed.
- */
-const RESOURCE_FAILURE = /force-killed|out of memory|oom|killed|memoryerror|cuda|worker .* died/i
-
-async function extractWithMarker(
-  absolutePath: string,
-  workDir: string,
-  wantImages: boolean,
-): Promise<Extraction | { failed: string; resource: boolean }> {
-  const flags = await supportedMarkerFlags()
-
-  // Do NOT remove `--disable_ocr`. The flag is what keeps Marker on the CPU:
-  // the target machine's GPU (GTX 1650 Max-Q, 4GB VRAM) cannot hold Marker's
-  // models, and without the flag the process is OOM-killed mid-run, leaving a
-  // half-written markdown file behind.
-  const args = [absolutePath, '--output_dir', workDir, '--disable_ocr']
-
-  // Text-only conversions do not need the figures, and skipping them saves
-  // the image-extraction pass and the disk writes that go with it.
-  if (!wantImages && flags.has('--disable_image_extraction')) {
-    args.push('--disable_image_extraction')
-  }
-  // Marker renders every page at a low DPI for layout and a high DPI for
-  // text/equation recognition. The defaults (96/192) are tuned for OCR of
-  // photographed pages; these documents are born-digital PDFs with a text
-  // layer, and lowering the high-resolution pass is the single biggest
-  // speed-up available on CPU. The low-resolution pass stays at the default
-  // because that is what the layout model reads.
-  if (flags.has('--highres_image_dpi')) {
-    args.push('--highres_image_dpi', '144')
-  }
-  if (flags.has('--output_format')) {
-    args.push('--output_format', 'markdown')
-  }
-
-  let result = await run('marker_single', args, MARKER_TIMEOUT_MS)
-
-  // Marker spawns a worker per model and its watchdog force-kills a worker
-  // that stops answering — the "Force-killed fast_layout (pid …)" failure on
-  // a machine without the RAM for two copies of the models. Retrying the same
-  // document single-process costs another run but keeps only one set of
-  // models resident, which is usually enough to finish. Worth the retry: the
-  // alternative is seconds-per-page replaced by a weaker extractor on a
-  // machine that could have produced the good output.
-  if (
-    result.code !== 0 &&
-    !result.missing &&
-    RESOURCE_FAILURE.test(result.stderr) &&
-    flags.has('--disable_multiprocessing') &&
-    !args.includes('--disable_multiprocessing')
-  ) {
-    result = await run(
-      'marker_single',
-      [...args, '--disable_multiprocessing'],
-      MARKER_TIMEOUT_MS,
-    )
-  }
-
-  if (result.missing) {
-    return { failed: 'missing', resource: false }
-  }
-  if (result.timedOut) {
-    return {
-      failed: `Marker timed out after ${Math.round(MARKER_TIMEOUT_MS / 60_000)} minutes.`,
-      resource: true,
-    }
-  }
-  if (result.code !== 0) {
-    return {
-      failed: `Marker exited with code ${String(result.code)}: ${tail(result.stderr, 400)}`,
-      resource: RESOURCE_FAILURE.test(result.stderr),
-    }
-  }
-
-  const markdownPath = await findFirstWithExtension(workDir, '.md')
-  if (markdownPath === null) {
-    return {
-      failed: `Marker produced no markdown. Its output was: ${tail(result.stdout, 200)}`,
-      resource: false,
-    }
-  }
-  const imagesCandidate = path.join(path.dirname(markdownPath), 'images')
-  return {
-    markdown: await fs.readFile(markdownPath, 'utf8'),
-    imagesDir: (await exists(imagesCandidate)) ? imagesCandidate : null,
-    extractor: 'marker',
   }
 }
 
@@ -334,9 +246,9 @@ function tail(text: string, limit: number): string {
 }
 
 /**
- * The fast engine: pdftext (Marker's own CPU text extractor) with a
- * pypdfium2 fallback, both driven by `resources/python/pdf_to_markdown.py`.
- * Seconds per paper. No figures.
+ * The fast engine: pdftext (a CPU text extractor) with a pypdfium2 fallback,
+ * both driven by `resources/python/pdf_to_markdown.py`. Seconds per paper.
+ * No figures.
  */
 async function extractFast(
   absolutePath: string,
@@ -345,7 +257,7 @@ async function extractFast(
   const script = pythonScriptPath()
   if (!(await exists(script))) {
     return {
-      failed: `Fast extractor script is missing at ${script}. Reinstall the app, or use the Marker engine.`,
+      failed: `Fast extractor script is missing at ${script}. Reinstall the app, or switch to the Docling engine.`,
     }
   }
   const result = await run(
@@ -356,7 +268,7 @@ async function extractFast(
   if (result.missing) {
     return {
       failed:
-        'python3 is not available. Install Python 3 (the extractor needs pdftext or pypdfium2 — both ship with Marker), or use the Marker engine.',
+        'python3 is not available. Install Python 3 (the extractor needs pdftext or pypdfium2), or switch to the Docling engine.',
     }
   }
   if (result.timedOut) {
@@ -384,7 +296,78 @@ async function extractFast(
     extractor: 'fast',
     warning:
       `Converted with the fast extractor (${backend}) — no figures, and two-column papers may be interleaved. ` +
-      'Use the Marker engine for figure descriptions or when reading order matters.',
+      'Use the Docling engine for figure descriptions or when reading order matters.',
+  }
+}
+
+/**
+ * The default engine: the Docling CLI, run inside its own virtualenv.
+ *
+ * Docling is the only local engine with a real layout model: reading order,
+ * table structure and figure regions come from the model rather than from
+ * heuristics, and on CUDA it is fast enough to run per document. The wrapper
+ * script (`docling_to_markdown.py`) does the two things the app needs on top
+ * of the CLI — it extracts Docling's inline base64 figures to real image
+ * files and rewrites the markdown links — and hands the caller a predictable
+ * `<workDir>/<stem>.md` plus, when there are figures, `<workDir>/images/`.
+ *
+ * The venv path is a constant rather than a PATH lookup because Docling
+ * cannot live in the app's interpreter: it pulls torch and a layout model,
+ * and the user installs it separately. That install location is the one
+ * thing the app has to be told about, and `DOCLING_VENV` is how.
+ */
+async function extractWithDocling(
+  absolutePath: string,
+  workDir: string,
+): Promise<Extraction | { failed: string }> {
+  const script = doclingScriptPath()
+  if (!(await exists(script))) {
+    return {
+      failed: `Docling wrapper script is missing at ${script}. Reinstall the app, or switch the extractor to the fast engine.`,
+    }
+  }
+  const venvPython = path.join(DOCLING_VENV, 'bin', 'python3')
+  if (!(await exists(venvPython))) {
+    return {
+      failed:
+        `Docling's virtualenv was not found at ${DOCLING_VENV}. Create it ` +
+        `(\`python3 -m venv ${DOCLING_VENV} && ${DOCLING_VENV}/bin/pip install docling\`), ` +
+        `set DOCLING_VENV to its root, or switch the extractor to the fast engine.`,
+    }
+  }
+  const result = await run(
+    venvPython,
+    [script, absolutePath, workDir, '--device', DOCLING_DEVICE],
+    DOCLING_TIMEOUT_MS,
+  )
+  if (result.missing) {
+    return {
+      failed: `Docling's venv python is not executable at ${venvPython}.`,
+    }
+  }
+  if (result.timedOut) {
+    return {
+      failed: `Docling timed out after ${Math.round(DOCLING_TIMEOUT_MS / 60_000)} minutes.`,
+    }
+  }
+  if (result.code !== 0) {
+    return {
+      failed: `Docling failed: ${tail(result.stderr, 300) || `exit code ${String(result.code)}`}`,
+    }
+  }
+  const markdownPath = await findFirstWithExtension(workDir, '.md')
+  if (markdownPath === null) {
+    return { failed: 'Docling produced no markdown.' }
+  }
+  // The wrapper creates `images/` only when it actually wrote a figure out,
+  // so the directory's absence is the honest signal that there is nothing
+  // for the vision pass to describe.
+  const imagesDir = path.join(workDir, 'images')
+  const hasImages = await exists(imagesDir)
+  return {
+    markdown: await fs.readFile(markdownPath, 'utf8'),
+    imagesDir: hasImages ? imagesDir : null,
+    extractor: 'docling',
   }
 }
 
@@ -393,7 +376,6 @@ async function extract(
   relativePath: string,
   workDir: string,
   engine: ExtractionEngine,
-  wantImages: boolean,
 ): Promise<Extraction | { failed: string }> {
   if (!PDF_EXTENSIONS.has(path.extname(relativePath).toLowerCase())) {
     return readPlainText(absolutePath)
@@ -403,28 +385,7 @@ async function extract(
     return extractFast(absolutePath, workDir)
   }
 
-  const viaMarker = await extractWithMarker(absolutePath, workDir, wantImages)
-  if (!('failed' in viaMarker)) return viaMarker
-  // Falling back is right when Marker is absent or when the *machine* failed
-  // (its own watchdog force-killed the layout worker on a low-memory box).
-  // A document-level failure — malformed file, encrypted PDF — is reported
-  // instead, because retrying it through a weaker extractor would replace a
-  // specific reason with a vague one.
-  if (viaMarker.failed !== 'missing' && !viaMarker.resource) return viaMarker
-
-  const fallback = await extractFast(absolutePath, workDir)
-  if (!('failed' in fallback)) {
-    return {
-      ...fallback,
-      warning:
-        viaMarker.failed === 'missing'
-          ? fallback.warning
-          : `Marker could not finish this document on this machine (${viaMarker.failed.slice(0, 160)}). Converted with the fast extractor instead — no figures, and reading order may differ.`,
-    }
-  }
-  return {
-    failed: `${viaMarker.failed === 'missing' ? 'Marker is not installed.' : viaMarker.failed} The fallback also failed: ${fallback.failed}`,
-  }
+  return extractWithDocling(absolutePath, workDir)
 }
 
 /**
@@ -475,11 +436,9 @@ export interface ConvertOptions {
   docPaths: string[]
   mode: ConversionMode
   /**
-   * Which extractor to run. `auto` is Marker with a fallback; `fast` skips
-   * Marker entirely. Marker reconstructs layout properly and costs minutes of
-   * CPU per paper; PyMuPDF4LLM takes seconds and interleaves two-column
-   * papers. Which one is right depends on the document, so the choice belongs
-   * to the user rather than to a hardcoded order.
+   * Which extractor to run. `auto` is the Docling engine (the default);
+   * `fast` is the local Python extractor; `webchat` drives a chat site in a
+   * browser window instead of running anything locally.
    */
   engine: ExtractionEngine
   /** Chat site the `webchat` engine drives. Unused by the other engines. */
@@ -488,20 +447,19 @@ export interface ConvertOptions {
   onProgress: (progress: ConvertProgress) => void
 }
 
-
 /**
- * Convert every requested document. Sequential by design: Marker is
- * CPU-bound and saturates the machine on its own, so running two at once
- * makes both slower and doubles peak memory — which is the resource the
- * `--disable_ocr` flag exists to protect.
+ * Convert every requested document. Sequential by design: the Docling layout
+ * model is GPU-bound, the fast engine is CPU-bound, and the chat sites the
+ * `webchat` engine drives rate-limit — running two at once makes all three
+ * slower and doubles peak memory.
  */
 export async function convertDocuments(
   options: ConvertOptions,
 ): Promise<ConvertResult> {
   const { projectRoot, mode, onProgress } = options
-  // The chat engine is not an extractor at all: it needs a browser window,
-  // the session the user is signed into, and minutes per document. It is
-  // routed to its own module before any of the local machinery runs.
+  // The chat-site engine is not an extractor at all: it needs a browser
+  // window, the session the user is signed into, and minutes per document.
+  // It is routed to its own module before any of the local machinery runs.
   if (options.engine === 'webchat') {
     return convertDocumentsViaWebChat({
       projectRoot,
@@ -546,14 +504,18 @@ export async function convertDocuments(
       })
     }
 
-    // Figures need a layout model to know which image belongs to which
-    // caption, and the fast engine has none. Refusing is the honest answer:
-    // the alternative is a document recorded as `text-images` with no
-    // descriptions in it, which the user only discovers when the prompt is
-    // missing everything the figures said.
-    if (engine === 'fast' && mode === 'text-images' && PDF_EXTENSIONS.has(path.extname(document.path).toLowerCase())) {
+    // The fast engine cannot extract figures — that is a real limitation of
+    // running without a layout model, and the honest answer is to refuse
+    // rather than produce a document recorded as `text-images` with no
+    // descriptions in it. Docling has no such limitation: the layout model
+    // finds the figures and the wrapper writes them out.
+    if (
+      engine === 'fast' &&
+      mode === 'text-images' &&
+      PDF_EXTENSIONS.has(path.extname(document.path).toLowerCase())
+    ) {
       const reason =
-        'The fast extractor does not extract figures. Switch the extractor to Marker for a text + figures conversion, or convert in text-only mode.'
+        'The fast extractor does not extract figures. Switch the extractor to Docling for a text + figures conversion, or convert in text-only mode.'
       failed.push({ path: document.path, error: reason })
       state[slug] = { path: document.path, status: 'failed', mode, error: reason }
       await writeState(projectRoot, state)
@@ -575,13 +537,14 @@ export async function convertDocuments(
 
     const outDir = path.join(convertedRoot(projectRoot), slug)
     const workDir = path.join(workRoot, slug)
+    const targetPath = markdownPathFor(projectRoot, slug)
     const absoluteDoc = resolveWithinRoot(
       documentsRoot(projectRoot),
       document.path,
     )
 
     try {
-      report('extracting', `Extracting text from ${path.basename(document.path)}`)
+      report('extracting', `Converting ${path.basename(document.path)}`)
       await fs.rm(workDir, { recursive: true, force: true })
       await fs.mkdir(workDir, { recursive: true })
 
@@ -590,9 +553,6 @@ export async function convertDocuments(
         document.path,
         workDir,
         engine,
-        // Figures are only worth extracting when something will describe
-        // them; in text mode Marker's image pass is pure cost.
-        mode === 'text-images',
       )
       if ('failed' in extraction) {
         throw new Error(extraction.failed)
@@ -636,7 +596,7 @@ export async function convertDocuments(
       }
 
       report('saving', `Writing ${slug}.md`)
-      await writeFileEnsuringDir(markdownPathFor(projectRoot, slug), markdown)
+      await writeFileEnsuringDir(targetPath, markdown)
 
       state[slug] = {
         path: document.path,
