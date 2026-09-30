@@ -50,7 +50,7 @@ import { rankCandidatesWithLlm } from './llm-ranker'
 const MAX_COMMITS = 40
 const MAX_RECENT_FILES = 60
 const CANDIDATE_LIMIT = 40
-const SHALLOW_BYTES = 2048
+const SHALLOW_BYTES = 4096
 const INDEX_CONCURRENCY = 32
 
 interface CommitInfo {
@@ -131,11 +131,16 @@ async function readHead(
 
 /**
  * Build a BM25 index over a shallow preview of every file: the path plus
- * the first couple of kilobytes. Deliberately not the whole file — the
- * point of this pipeline is to keep work off the model's context window,
- * and reading every file in full to score it defeats that on a large
- * repository. The preview is enough to catch imports, exports, and header
- * comments, which is where conceptual matches live.
+ * the first few kilobytes. Deliberately not the whole file — the point of
+ * this pipeline is to keep work off the model's context window, and reading
+ * every file in full to score it defeats that on a large repository. The
+ * preview is enough to catch imports, exports, and header comments, which
+ * is where conceptual matches live.
+ *
+ * The window is 4 KB rather than 2 KB because license headers, multi-line
+ * JSDoc blocks, and long import groups routinely consume the first couple
+ * of kilobytes on their own — on those files a 2 KB preview never reaches
+ * the declarations a conceptual query would match against.
  */
 async function buildShallowIndex(
   root: string,
@@ -269,21 +274,66 @@ function aggregateCandidates(input: {
     bump(path, 1.5 / (rank + 5), 'recent')
   })
 
-  // Co-change locality: a file that keeps appearing in the same commits as
-  // another candidate is very likely part of the same change, even when
-  // neither its name nor its contents match the query terms.
-  const candidates = new Set(scores.keys())
-  if (candidates.size > 0) {
-    const coChange = new Map<string, number>()
+  // Co-change signal, applied in two directions:
+  //
+  //   1. Reinforcement — a file that keeps appearing in the same commits as
+  //      other candidates is very likely part of the same change, even when
+  //      neither its name nor its contents match the query terms. It gets a
+  //      score bump.
+  //
+  //   2. Expansion — a file that repeatedly appears in the same commits as
+  //      a *top-ranked* candidate but did not match text or graph search is
+  //      pulled into the candidate set with a smaller bump. Without this
+  //      step, a relevant file whose skeleton shares no tokens with the
+  //      instruction — an `auth.ts` edit that always touches `middleware.ts`
+  //      whose path and header never mention auth and which was not recently
+  //      changed — never reaches the precision pass, and Jev can only rate
+  //      what it is shown. Expansion closes that gap.
+  //
+  // Expansion is seeded from the top-scoring candidates only, not from every
+  // hit: expanding from the BM25 long tail would drag whole commit
+  // neighborhoods into the pool on the strength of one spurious token match.
+  if (scores.size > 0) {
+    const TOP_SEED_COUNT = 10
+    const topSeeds = new Set(
+      [...scores.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, TOP_SEED_COUNT)
+        .map(([path]) => path),
+    )
+
+    const inSetCoChange = new Map<string, number>()
+    const outOfSetCoChange = new Map<string, number>()
     for (const commit of input.history) {
-      const relevant = commit.files.filter((file) => candidates.has(file))
-      if (relevant.length < 2) continue
-      for (const file of relevant) {
-        coChange.set(file, (coChange.get(file) ?? 0) + relevant.length - 1)
+      const inSet = commit.files.filter((file) => scores.has(file))
+      if (inSet.length >= 2) {
+        for (const file of inSet) {
+          inSetCoChange.set(
+            file,
+            (inSetCoChange.get(file) ?? 0) + inSet.length - 1,
+          )
+        }
+      }
+      const seedHits = commit.files.filter((file) => topSeeds.has(file))
+      if (seedHits.length === 0) continue
+      for (const file of commit.files) {
+        if (!input.known.has(file) || scores.has(file)) continue
+        outOfSetCoChange.set(
+          file,
+          (outOfSetCoChange.get(file) ?? 0) + seedHits.length,
+        )
       }
     }
-    for (const [path, count] of coChange) {
+    for (const [path, count] of inSetCoChange) {
       bump(path, Math.min(count, 10) * 0.4, 'co-change')
+    }
+    for (const [path, count] of outOfSetCoChange) {
+      // A single shared commit is noise; require at least two before a file
+      // joins the candidate set purely on co-change evidence. The weight is
+      // half of the in-set reinforcement so an expanded file enters the pool
+      // but never outranks a candidate with a direct text or graph match.
+      if (count < 2) continue
+      bump(path, Math.min(count, 6) * 0.3, 'co-change')
     }
   }
 

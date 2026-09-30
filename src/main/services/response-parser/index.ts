@@ -29,20 +29,34 @@ function toParsedFile(block: CodeBlock, path: string | null, source: ParsedFile[
 }
 
 /**
- * The headings that start the trailing prose sections. The output contract
- * guarantees every `File:` entry comes first and the Explanation / Debug
- * sections come last, so anything from either heading onward is prose and
- * illustrative commands — never a file change.
+ * The headings and delimited markers that start the trailing prose
+ * sections. The output contract guarantees every `File:` entry comes first
+ * and the Explanation / Debug sections come last, so anything from either
+ * marker onward is prose and illustrative commands — never a file change.
  *
- * Both headings are matched, not just Explanation, because a non-conforming
+ * Both sections are matched, not just Explanation, because a non-conforming
  * response can omit Explanation but still include Debug. Slicing at
  * Explanation alone would then leave the Debug body in the scan, and any
  * code fence there with a `File:`-shaped line above it would be mistaken
  * for a real file entry — the exact failure mode where a shell command or
  * example snippet is written to disk because it happens to sit under a path.
  *
- * The keyword may sit anywhere in the heading line, not just at the start.
- * Models routinely prefix it with a section number or a title —
+ * Two dialects are recognised, because the output contract has changed
+ * shape and old responses (and old habits in a model's training data) may
+ * still arrive in the previous form:
+ *
+ *   - the markdown-heading dialect — `## Explanation`, `### Part 3: Debug`,
+ *     `## 2. Explanation` — where the keyword sits anywhere in a line of
+ *     two to six `#` characters, and bold/italic markers, a trailing
+ *     colon, and any surrounding prose are absorbed by the trailing
+ *     `[^\r\n]*`; and
+ *
+ *   - the delimited dialect the prompt now emits — `===Explanation===`,
+ *     `===Debug===` — where the line consists of two or more `=` on each
+ *     side of the keyword and nothing but whitespace around it.
+ *
+ * The keyword may sit anywhere in the markdown heading, not just at the
+ * start. Models routinely prefix it with a section number or a title —
  * `### Section 2 — Explanation`, `#### Part 3: Debug`, `## 2. Explanation`
  * are all shapes that have been observed. Anchoring the keyword to the
  * start of the heading, which is what an earlier version of this regex did,
@@ -53,37 +67,77 @@ function toParsedFile(block: CodeBlock, path: string | null, source: ParsedFile[
  * "skipped" warnings, or worse, written to disk if a `File:`-shaped line
  * happened to sit above them.
  *
- * A heading is therefore recognised as a line of two to six `#` characters
- * whose text contains `Explanation` or `Debug` as a whole word. Bold and
- * italic markers, a trailing colon, and any surrounding prose are all
- * absorbed by the surrounding `[^\r\n]*`. Matching is case-insensitive.
+ * Matching is case-insensitive in both dialects. The constraints that
+ * remain are deliberate:
  *
- * The two constraints that remain are deliberate:
- *
- *   - At least two hashes. Shell, Python, Ruby, and YAML all use `#` for
- *     line comments, and a file body containing `# Explanation of the
- *     algorithm` would otherwise be sliced off mid-file, truncating the
- *     very content the parser was scanning for.
+ *   - At least two `#` / at least two `=`. Shell, Python, Ruby, and YAML
+ *     all use `#` for line comments, and a file body containing
+ *     `# Explanation of the algorithm` would otherwise be sliced off
+ *     mid-file, truncating the very content the parser was scanning for.
+ *     A single `=` is a YAML mapping separator, so the delimited branch
+ *     requires at least two.
  *
  *   - The keyword must be a whole word. `Debugging` and `Explanations`
  *     do not match, so a heading like `## Debugging tips` inside a file
  *     body is not mistaken for the terminal section.
+ *
+ *   - In the delimited dialect, only whitespace may follow the closing
+ *     `=`. A body line such as `===Explanation of the algorithm===` is a
+ *     sentence, not a section header, and must not end the file-entry
+ *     scan early.
  */
 const TERMINAL_HEADING =
-  /^[ \t]*#{2,6}[^\r\n]*\b(?:Explanation|Debug)\b[^\r\n]*$/im
+  /^[ \t]*(?:#{2,6}[^\r\n]*\b(?:Explanation|Debug)\b[^\r\n]*|={2,}\s*(?:Explanation|Debug)\s*={2,}[ \t]*)$/im
 
 /**
- * Return only the part of the response that can contain file entries. When a
- * terminal heading is present, the response is sliced at the first one:
- * every code fence below it is illustrative (bash commands, examples) and
- * would otherwise be reported as a "skipped" block — or worse, picked up as
- * a file change if it happens to carry a path-like header.
+ * Opening marker of the delimited file-entry section the output contract
+ * now emits. Matches a line of the shape `===Files===` — two or more `=`
+ * on each side of the keyword, nothing but whitespace around it, any case.
+ * The matching terminator is `SECTION_CLOSE` below.
+ */
+const FILES_SECTION_OPEN = /^[ \t]*={2,}\s*Files\s*={2,}[ \t]*$/im
+
+/**
+ * Terminator of a delimited section. Deliberately exact: six `=` on a line
+ * by itself (with optional surrounding whitespace), not seven or more.
+ * `=======` (7+) is the SEARCH/REPLACE separator used inside a file body,
+ * and treating it as the end of the enclosing section would silently
+ * truncate every patch that followed it. Six is also the floor because a
+ * stray `=====` in ordinary prose is more likely a horizontal rule than a
+ * section terminator, and the output contract is explicit about the count.
+ */
+const SECTION_CLOSE = /^[ \t]*={6}[ \t]*$/m
+
+/**
+ * Return only the part of the response that can contain file entries.
  *
- * When neither heading is present — e.g. a truncated or non-conforming
- * response — the whole string is returned untouched, preserving the
- * existing degraded-mode behavior.
+ * The delimited dialect the prompt now emits opens with `===Files===` and
+ * closes with `======`. When both markers are present, the body between
+ * them is returned: the markers themselves are dropped, so a plaintext-mode
+ * fallback cannot swallow the closing `======` line as if it were file
+ * content, and the Explanation / Debug sections cannot leak into the scan.
+ *
+ * When the delimited opening is missing — a truncated response, or one
+ * still using the previous markdown-heading contract — the response is
+ * sliced at the first `## Explanation` / `## Debug` / `===Explanation===`
+ * / `===Debug===` heading instead. Both dialects are matched by
+ * `TERMINAL_HEADING`.
+ *
+ * When neither marker is present, the whole string is returned untouched,
+ * preserving the existing degraded-mode behavior.
  */
 function filesSection(raw: string): string {
+  const open = FILES_SECTION_OPEN.exec(raw)
+  if (open) {
+    const bodyStart = open.index + open[0].length
+    const rest = raw.slice(bodyStart)
+    const close = SECTION_CLOSE.exec(rest)
+    if (close) return rest.slice(0, close.index)
+    // No close found. Fall through to the heading-based slice below, which
+    // will catch `===Explanation===` / `===Debug===` if the model emitted
+    // them, and otherwise returns the whole string.
+  }
+
   const match = TERMINAL_HEADING.exec(raw)
   return match ? raw.slice(0, match.index) : raw
 }

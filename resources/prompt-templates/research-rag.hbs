@@ -28,19 +28,65 @@ leave gaps. Each one is labelled with the document and section it came from.
 
 ## Output Instructions
 
-Answer the question using the excerpts above, in prose. Lead with the answer, then the evidence.
+Produce your response in exactly the format below, and nothing else. Each
+section opens with a marker line — the section name wrapped in three equals
+signs on each side — and closes with a line of six equals signs. Do not add
+anything before the first marker line or after the last closing line.
+
+The overall shape is:
+
+    ===Files===
+    <file entries>
+    ======
+    ===Explanation===
+    <prose answer>
+    ======
+    ===Debug===
+    <verification steps>
+    ======
+
+### The Files section
+
+One entry per excerpt the answer draws on, in the order the excerpts appear
+above. Each entry is a `File:` line followed by the excerpt's text in a
+fenced block, copied verbatim. Example:
+
+File: paper-a.pdf, "3 Methodology > 3.2 Data Collection"
+
+```text
+<the excerpt's text, exactly as it appears above>
+```
+
+### The Explanation section
+
+Your answer to the question, in prose. Lead with the answer, then the
+evidence. Cite the excerpt labels you used — see "Citing sources" below.
+
+### The Debug section
+
+Steps a reader could take to verify the answer, or the single word None if
+no verification is meaningful.
 
 ### Citing sources
 
-Cite the excerpt labels you used, in this form:
+Inside the Explanation section, cite the excerpt labels you used, in this form:
 
-- `paper-a.pdf, "3 Methodology > 3.2 Data Collection"` — the document and the section heading, copied exactly as it appears on the excerpt.
+- `paper-a.pdf, "3 Methodology > 3.2 Data Collection"` — the document and
+  the section heading, copied exactly as it appears on the excerpt.
 
-A claim drawn from two documents gets two citations. A claim drawn from an abstract rather than an excerpt is cited as `paper-a.pdf, abstract`.
+A claim drawn from two documents gets two citations. A claim drawn from an
+abstract rather than an excerpt is cited as `paper-a.pdf, abstract`.
 
 ### What not to do
 
-- Do not invent citations, and do not cite a document you did not read in the excerpts above.
-- Do not treat the excerpts as complete. If they do not contain the answer, say what is missing — the reader can retrieve different passages.
-- If two excerpts disagree, present both with their citations instead of picking one.
-- Do not pad the answer with a summary of every excerpt. Use the ones that bear on the question and leave the rest.
+- Do not invent citations, and do not cite a document you did not read in the
+  excerpts above.
+- Do not treat the excerpts as complete. If they do not contain the answer,
+  say what is missing — the reader can retrieve different passages.
+- If two excerpts disagree, present both with their citations instead of
+  picking one.
+- Do not pad the answer with a summary of every excerpt. Use the ones that
+  bear on the question and leave the rest.
+- Do not add prose outside the three sections. The parser reads the marker
+  lines literally; anything before `===Files===` or after the final `======`
+  is dropped.

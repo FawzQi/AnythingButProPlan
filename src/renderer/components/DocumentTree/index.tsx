@@ -155,7 +155,9 @@ function ProgressBar({ fraction }: { fraction: number }): ReactElement {
     >
       <div
         className="h-full bg-sky-500 transition-[width]"
-        style={{ width: `${Math.round(Math.max(0, Math.min(1, fraction)) * 100)}%` }}
+        style={{
+          width: `${Math.round(Math.max(0, Math.min(1, fraction)) * 100)}%`,
+        }}
       />
     </div>
   );
@@ -163,6 +165,12 @@ function ProgressBar({ fraction }: { fraction: number }): ReactElement {
 
 export function DocumentTree({ width }: { width: number }): ReactElement {
   const projectRoot = useAppStore((state) => state.projectRoot);
+  // Same action the coding mode's FileTree uses to open a folder. The
+  // header-level Open folder button that used to live in App.tsx is gone,
+  // so this is the only control that points the app at a project without
+  // leaving research mode. It writes the one shared `projectRoot`, and the
+  // effect below re-runs the scan when that changes.
+  const openProject = useAppStore((state) => state.openProject);
 
   const documents = useResearchStore((state) => state.documents);
   const selected = useResearchStore((state) => state.selected);
@@ -190,10 +198,23 @@ export function DocumentTree({ width }: { width: number }): ReactElement {
     void refresh();
   }, [refresh, projectRoot]);
 
+  /**
+   * Open a different folder. Deliberately not awaited inside the click
+   * handler beyond the store call itself: the picker is a native modal and
+   * the store action resolves after the user has either chosen or
+   * dismissed it, at which point the `useEffect` above fires on the new
+   * `projectRoot` and re-scans. Doing anything else here would race that
+   * effect.
+   */
+  const openFolder = (): void => {
+    void openProject();
+  };
+
   const convertible = documents.filter(
     (document) => document.convertedExists || document.error === undefined,
   );
-  const targets = selected.length > 0 ? selected : convertible.map((d) => d.path);
+  const targets =
+    selected.length > 0 ? selected : convertible.map((d) => d.path);
   const fraction =
     progress === null ? 0 : (progress.index - 1) / Math.max(1, progress.total);
 
@@ -239,6 +260,15 @@ export function DocumentTree({ width }: { width: number }): ReactElement {
             aria-label="Rescan documents"
           >
             {scanning ? "…" : "↻"}
+          </Button>
+          <Button
+            variant="primary"
+            className={COMPACT}
+            disabled={converting || scanning}
+            onClick={openFolder}
+            title="Open a project folder"
+          >
+            {scanning ? "Scanning…" : "Open folder"}
           </Button>
         </>
       }
@@ -297,8 +327,10 @@ export function DocumentTree({ width }: { width: number }): ReactElement {
               }
               title="Which extractor converts PDFs. Marker reconstructs layout and figures but takes minutes per paper on CPU; fast uses pdftext and takes seconds, without figures."
             >
-              <option value="auto">extractor: Marker (accurate, slow)</option>
-              <option value="fast">extractor: fast (seconds, no figures)</option>
+              <option value="auto">extractor: Docling (accurate, slow)</option>
+              <option value="fast">
+                extractor: fast (seconds, no figures)
+              </option>
               <option value="webchat">
                 extractor: webchat (raw, then rewrite via chat)
               </option>
@@ -355,8 +387,8 @@ export function DocumentTree({ width }: { width: number }): ReactElement {
                   <>
                     Nothing in{" "}
                     <code className="rounded bg-[#2a2f38] px-1">docs/</code>{" "}
-                    yet. Put your PDFs, markdown, or text files inside and
-                    press ↻.
+                    yet. Put your PDFs, markdown, or text files inside and press
+                    ↻.
                   </>
                 )}
               </Banner>

@@ -16,11 +16,42 @@
 
 {{/each}}
 
+## Input Instruction
+
+update the baseprompt to make the llm make this output format
+===Files===
+(file content)
+======
+===Explanation===
+(explanation conten)
+======
+===Debug===
+(debug content)
+======
+
+also update the parsing file based on this new output format
+
 ## Output Instructions
 
-Reply using exactly the three sections below, in this order, and nothing else.
+Reply using exactly the three delimited sections below, in this order, and nothing else:
 
-### Section 1 — Files
+
+===Files===
+<one entry per file that needs to change — see "File entries" below>
+======
+===Explanation===
+<plain prose explaining what changed and why, or the single word None>
+======
+===Debug===
+<commands to verify or reproduce the change, or the single word None>
+======
+
+
+Each section opens with a line reading `===<Name>===` (using the exact case shown: `Files`, `Explanation`, `Debug`) and closes with a line reading `======` on its own. All three sections — and all three closing `======` lines — are mandatory, even when a section's body is `None`. Do not reorder the sections, and do not write anything before the opening `===Files===` line or after the final `======` line.
+
+A section terminator is exactly six `=` characters. The SEARCH/REPLACE separator inside a file entry is seven `=======`. The two are distinct lines and must not be confused.
+
+### File entries (inside the `===Files===` section)
 
 One entry per file that needs to change. **Prefer the full-file markdown form.** Emit each file as a `File: <path>` header followed by a fenced code block containing that file's complete contents, with the language tag shown in the context above.
 
@@ -59,7 +90,7 @@ Delete: src/legacy/old-helper.ts
 
 The `Delete:` line must sit in the prose between file entries, **not inside a fenced code block**. A `Delete:` line inside a code body is treated as ordinary file content and is never executed as a directive, so a migration script or ORM model that happens to contain the text `Delete: something` is safe.
 
-A delete directive may appear anywhere among the `File:` entries, in any order — deletes and edits to other files can be freely interleaved in the same response. A response that contains only delete directives is valid.
+A delete directive may appear anywhere among the `File:` entries, in any order — deletes and edits to other files can be freely interleaved inside the `===Files===` section. A `===Files===` section that contains only delete directives is valid.
 
 Paths use the same project-relative POSIX form as `File:` headers (`src/app.ts`, not `./src/app.ts` and not an absolute path). A path that does not exist on disk is a no-op reported as `not-found`; it is not an error.
 
@@ -74,27 +105,28 @@ Paths use the same project-relative POSIX form as `File:` headers (`src/app.ts`,
 - Do not add prose between file entries.
 - If a file is unchanged, do not include it.
 
-### Section 2 — Explanation
+### The `===Explanation===` section
 
-After all file entries, write a heading exactly as `## Explanation`.
+After the closing `======` of the Files section, write a line reading `===Explanation===`, then the explanation, then a line reading `======`.
 
-Under it, briefly explain in plain prose:
+The body is plain prose, briefly covering:
+
 - What was added, removed, or changed in each file.
 - Why the change was made (the reasoning, not a restatement of the diff).
 
-If there is nothing to explain, write `## Explanation` followed by the single word `None`.
+If there is nothing to explain, the body is the single word `None`.
 
-### Section 3 — Debug
+### The `===Debug===` section
 
-After the explanation, write a heading exactly as `## Debug`.
+After the closing `======` of the Explanation section, write a line reading `===Debug===`, then the debug content, then the final closing `======`.
 
-Under it, if the user needs to run commands to verify or reproduce the change, list them as fenced code blocks with the appropriate language tag (e.g. `bash`, `powershell`, `sh`). Each command block must be prefixed by a one-line description of what it does.
+If the user needs to run commands to verify or reproduce the change, list them as fenced code blocks with the appropriate language tag (e.g. `bash`, `powershell`, `sh`). Each command block must be prefixed by a one-line description of what it does.
 
-If there are no debug commands, write `## Debug` followed by the single word `None`.
+If there are no debug commands, the body is the single word `None`.
 
 ### Hard constraints
 
-- No conversational text before `File:` entries, between them, or after `## Debug`.
-- The `## Explanation` and `## Debug` headings are **mandatory** — always emit both, even when their content is `None`.
+- No conversational text before the opening `===Files===` line, between sections, or after the final `======` line.
+- All three section headers — `===Files===`, `===Explanation===`, `===Debug===` — and all three closing `======` lines are **mandatory**.
 - Never put a `File:` line inside the Explanation or Debug section.
 - A `Delete:` directive is a line of prose, never a fenced block, and never appears inside the Explanation or Debug section.

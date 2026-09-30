@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 """Fast PDF -> markdown extraction for research mode.
 
-This is the "fast" engine and the fallback for a Marker that cannot finish.
-It runs in seconds per paper and needs no GPU and no model download.
+This is the "fast" engine and the fallback for a Docling run that cannot
+finish. It runs in seconds per paper and needs no GPU and no model download.
 
 Two backends, tried in order:
 
-1. `pdftext` — the same CPU text engine Marker uses internally, with layout
-   blocks sorted into reading order. If Marker is installed, this is already
-   on the machine as a dependency, so the fast path costs nothing extra to
-   install.
+1. `pdftext` — a CPU text extractor that sorts layout blocks into reading
+   order. It installs from pip without pulling in torch, so the fast path
+   costs nothing extra to install.
 2. `pypdfium2` — raw per-page text. No layout pass at all: a two-column paper
    comes out interleaved, tables come out as loose lines. Used only when
    pdftext is missing.
 
 Neither backend extracts figures. Figure descriptions need a layout model to
-say which image belongs to which caption, so that pass stays with Marker; the
+say which image belongs to which caption, so that pass stays with Docling; the
 caller tells the user when a conversion ran without figures.
 
 Usage:
@@ -31,7 +30,7 @@ import sys
 
 # pdftext spawns a process pool for page extraction by default and kills
 # workers that fail its health check — the same machinery that force-kills
-# Marker's layout worker on a low-memory machine. One worker keeps peak memory
+# Docling's layout worker on a low-memory machine. One worker keeps peak memory
 # at a single PDF page's worth and still runs far faster than the layout pass
 # it replaces.
 PDFTEXT_WORKERS = 1
@@ -97,7 +96,7 @@ def main() -> int:
 
     if markdown is None or not markdown.strip():
         # A PDF with no extractable text is almost always a scan. There is no
-        # OCR path by design (Marker runs with --disable_ocr to stay on CPU),
+        # OCR path by design (Docling runs with --disable_ocr to stay on CPU),
         # so this is a dead end the user needs told about.
         print(
             "no extractable text — this PDF is probably a scan, and OCR is "

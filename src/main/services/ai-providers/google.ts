@@ -9,10 +9,23 @@ const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
  * Pinned rather than configurable. A different model produces vectors in a
  * different space, so switching invalidates every stored embedding and the
  * whole corpus has to be re-embedded — a cost the user pays for no gain they
- * can see. `text-embedding-004` at 768 dimensions is the current default on
- * this endpoint. See CLAUDE.md, "Embeddings".
+ * can see.
+ *
+ * `text-embedding-004` was the pinned name for a while, but Google has
+ * retired it from `v1beta`: `embedContent` and `batchEmbedContents` now answer
+ * 404 (`models/text-embedding-004 is not found for API version v1beta`).
+ * `gemini-embedding-001` is the current embedding model that supports both
+ * methods. Its native width is 3072; the request below pins
+ * `outputDimensionality: 768` so the on-disk vector width is unchanged from
+ * what `text-embedding-004` produced. There is no retrieval-quality gain from
+ * the wider vector at the 20–200-document scale this app targets, and the
+ * extra width triples the index size. Note that swapping the model still
+ * changes the vector *space* — every stored embedding must be rebuilt once,
+ * after which the index is stable again.
+ *
+ * See CLAUDE.md, "Embeddings".
  */
-export const EMBEDDING_MODEL = "text-embedding-004";
+export const EMBEDDING_MODEL = "gemini-embedding-001";
 export const EMBEDDING_DIMENSIONS = 768;
 
 /**
@@ -185,6 +198,13 @@ export const googleProvider: AiProvider = {
    * why the index builder batches at 100. The response's `embeddings` array
    * is aligned with `requests`, and the caller relies on that alignment to
    * pair each vector with its chunk.
+   *
+   * `outputDimensionality` is required on `gemini-embedding-001` if the
+   * caller wants anything other than the native 3072. The research index
+   * pins 768 so the stored width matches what `text-embedding-004` produced;
+   * a caller that does not pass it will get back 3072-wide vectors and the
+   * load-time byte-length check in `VectorStore.load` will reject the old
+   * index rather than silently pairing chunks with truncated vectors.
    */
   async embed(input: EmbedInput): Promise<number[][]> {
     if (input.texts.length === 0) return [];
@@ -195,6 +215,9 @@ export const googleProvider: AiProvider = {
         // `generateContent` call where the model is in the URL path.
         model: `models/${input.model}`,
         content: { parts: [{ text }] },
+        // Pin the width so the stored index stays 768-wide regardless of
+        // what the model's native output is.
+        outputDimensionality: EMBEDDING_DIMENSIONS,
       })),
     };
     let response: Response;

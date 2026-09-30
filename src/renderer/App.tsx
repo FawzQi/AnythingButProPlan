@@ -9,7 +9,7 @@ import { PromptDashboard } from "./components/PromptDashboard";
 import { ResearchDashboard } from "./components/ResearchDashboard";
 import { ResponsePanel } from "./components/ResponsePanel";
 import { useResizableWidth } from "./lib/hooks";
-import { Banner, Button, ResizeHandle } from "./lib/ui";
+import { Banner, ResizeHandle } from "./lib/ui";
 
 const MODES: { id: AppMode; label: string; title: string }[] = [
   {
@@ -31,8 +31,6 @@ export default function App(): ReactElement {
   const mode = useAppStore((state) => state.aiSettings?.mode ?? "coding");
   const loadAiSettings = useAppStore((state) => state.loadAiSettings);
   const saveAiSettings = useAppStore((state) => state.saveAiSettings);
-  const openProject = useAppStore((state) => state.openProject);
-  const scanning = useAppStore((state) => state.scanning);
 
   // Left panel: the divider sits to its right, so dragging right grows it.
   const fileTree = useResizableWidth(420, { min: 180, max: 640, sign: 1 });
@@ -95,24 +93,6 @@ export default function App(): ReactElement {
             </button>
           ))}
         </div>
-        {/* The Coding panel carries its own "Open folder" button inside the
-            FileTree. Research mode renders DocumentTree, which has no such
-            control, so the only way to select a project there would be to
-            switch to Coding, open the folder, and switch back. Surface a
-            header-level button so a folder can be opened without leaving
-            research mode. It calls the same app-store `openProject` action,
-            so both modes end up pointed at the same project root. */}
-        {mode === "research" ? (
-          <Button
-            variant="primary"
-            className="px-2 py-0.5 text-xs"
-            onClick={() => void openProject()}
-            disabled={scanning}
-            title="Open a project folder"
-          >
-            {scanning ? "Scanning…" : "Open folder"}
-          </Button>
-        ) : null}
         <div className="ml-auto flex items-center gap-2">
           {notice ? (
             <span className="text-xs text-emerald-400">{notice}</span>

@@ -70,6 +70,13 @@ export function DiffViewer({
               newValue={content}
               splitView
               useDarkTheme
+              // `showDiffOnly` defaults to `true`, which collapses every
+              // unchanged run into a "… N lines hidden …" spacer and shows
+              // only the hunks that differ. The user asked to see the whole
+              // file with the change highlighted in place, so the full
+              // content is rendered and the diff markers still mark the
+              // added/removed lines.
+              showDiffOnly={false}
               leftTitle="On disk"
               rightTitle="Proposed"
             />

@@ -102,6 +102,10 @@ export function GitDiffViewer({
               newValue={modified}
               splitView
               useDarkTheme
+              // Same as the plain DiffViewer: show the whole file on both
+              // sides so the surrounding context is visible, rather than
+              // collapsing everything outside the changed hunks.
+              showDiffOnly={false}
               leftTitle={leftTitle}
               rightTitle={rightTitle}
             />
