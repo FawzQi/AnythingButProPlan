@@ -26,7 +26,6 @@ export function AiSettingsPanel(): ReactElement {
   const loading = useAppStore((state) => state.aiSettingsLoading);
   const load = useAppStore((state) => state.loadAiSettings);
   const save = useAppStore((state) => state.saveAiSettings);
-  const openWebChat = useAppStore((state) => state.openWebChat);
 
   const [keyDraft, setKeyDraft] = useState("");
 
@@ -122,16 +121,8 @@ export function AiSettingsPanel(): ReactElement {
             </button>
           ))}
         </div>
-        <div className="mt-2 flex items-center gap-3">
-          <Button
-            variant="ghost"
-            className="px-2 py-0.5 text-xs"
-            onClick={() => void openWebChat()}
-            title="Open the chat window so you can sign in before the first send"
-          >
-            Open chat window
-          </Button>
-          {activeWebChat ? (
+        {activeWebChat ? (
+          <div className="mt-2">
             <a
               href={activeWebChat.url}
               target="_blank"
@@ -141,8 +132,13 @@ export function AiSettingsPanel(): ReactElement {
             >
               {activeWebChat.url}
             </a>
-          ) : null}
-        </div>
+            <p className="mt-1 text-[11px] text-slate-500">
+              The chat window is opened from the header — see{" "}
+              <strong>Open chat</strong> next to the Coding / Research
+              toggle.
+            </p>
+          </div>
+        ) : null}
       </div>
 
       <div className="mb-4">

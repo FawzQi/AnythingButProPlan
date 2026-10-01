@@ -568,6 +568,23 @@ export interface WebChatSendResult {
   /** User-readable failure reason. Present when `ok` is false. */
   error?: string
 }
+
+/**
+ * Live state of a web chat site's window, as observed by the main process
+ * while a send is in flight.
+ *
+ *   - `idle`    — no send is in flight. The window is open or hidden, but
+ *                 nothing is happening.
+ *   - `working` — the site is streaming a reply. A visible "Stop" control
+ *                 or a changing message body was observed.
+ *   - `paused`  — generation stopped mid-reply and the site is waiting on
+ *                 the user to press a "Continue" button before it will
+ *                 finish. DeepSeek does this after a long reasoning phase
+ *                 on some models. Not the same as `idle`; the reply is
+ *                 incomplete and only a click in the window can resume it.
+ */
+export type WebChatStatus = 'idle' | 'working' | 'paused'
+
 /* ------------------------------------------------------------------------ *
  * Research mode
  * ------------------------------------------------------------------------ */

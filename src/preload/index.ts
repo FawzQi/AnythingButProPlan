@@ -41,6 +41,7 @@ import type {
   ScanResult,
   WebChatSendRequest,
   WebChatSendResult,
+  WebChatStatus,
   WebChatTargetId,
   WebChatTargetInfo,
   WriteFileRequest,
@@ -119,6 +120,8 @@ const api = {
     ipcRenderer.invoke(IpcChannel.WebChatOpen, target),
   webChatCancel: (): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.WebChatCancel),
+  webChatGetStatus: (): Promise<Record<WebChatTargetId, WebChatStatus>> =>
+    ipcRenderer.invoke(IpcChannel.WebChatStatusGet),
   researchScan: (projectRoot: string): Promise<ResearchScanResult> =>
     ipcRenderer.invoke(IpcChannel.ResearchScan, projectRoot),
   researchConvert: (request: ConvertRequest): Promise<ConvertResult> =>
@@ -164,6 +167,18 @@ const api = {
     callback: (progress: IndexBuildProgress) => void,
   ): (() => void) =>
     subscribe<IndexBuildProgress>(IpcChannel.ResearchIndexProgress, callback),
+  /**
+   * Subscribe to web chat status changes. The callback fires whenever the
+   * main process observes an idle → working → paused → … transition on any
+   * chat site, so the header's indicator can update without polling.
+   */
+  onWebChatStatusChanged: (
+    callback: (statuses: Record<WebChatTargetId, WebChatStatus>) => void,
+  ): (() => void) =>
+    subscribe<Record<WebChatTargetId, WebChatStatus>>(
+      IpcChannel.WebChatStatusChanged,
+      callback,
+    ),
 };
 
 function subscribe<T>(

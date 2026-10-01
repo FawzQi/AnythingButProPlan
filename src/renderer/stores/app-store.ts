@@ -12,6 +12,7 @@ import type {
   ParsedFile,
   ParseResult,
   RecentFolder,
+  WebChatStatus,
   WebChatTargetId,
   WebChatTargetInfo,
 } from "@shared/types";
@@ -126,6 +127,15 @@ interface AppState {
    */
   webChatSending: boolean;
 
+  /**
+   * Per-target status of the web chat windows, pushed from the main process
+   * whenever it changes. `idle` means no send is in flight for that site;
+   * `working` means the site is generating; `paused` means generation
+   * stopped and the site is waiting for the user to press a "Continue"
+   * button. Rendered next to the Open chat button in the header.
+   */
+  webChatStatus: Record<WebChatTargetId, WebChatStatus>;
+
   notice: string | null;
   error: string | null;
 
@@ -141,6 +151,9 @@ interface AppState {
   calculateMapTokens: () => Promise<void>;
   sendToWebChat: () => Promise<void>;
   openWebChat: () => Promise<void>;
+  setWebChatStatus: (
+    statuses: Record<WebChatTargetId, WebChatStatus>,
+  ) => void;
 
   openProject: () => Promise<void>;
   refreshProject: () => Promise<void>;
@@ -246,6 +259,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   mapTokenCount: null,
 
   webChatSending: false,
+
+  webChatStatus: {
+    deepseek: "idle",
+    chatgpt: "idle",
+    claude: "idle",
+    gemini: "idle",
+    kimi: "idle",
+    qwen: "idle",
+  },
 
   notice: null,
   error: null,
@@ -528,6 +550,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ error: message(error) });
     }
   },
+
+  setWebChatStatus: (statuses) => set({ webChatStatus: statuses }),
 
   openProject: async () => {
     try {

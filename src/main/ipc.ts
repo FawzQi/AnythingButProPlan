@@ -44,6 +44,7 @@ import type {
   ScanResult,
   WebChatSendRequest,
   WebChatSendResult,
+  WebChatStatus,
   WebChatTargetId,
   WriteFileRequest,
   WriteFileResult,
@@ -97,9 +98,11 @@ import {
 } from "./services/ai-providers";
 import {
   cancelWebChat,
+  getWebChatStatuses,
   listWebChatTargets,
   openWebChat,
   sendToWebChat,
+  setWebChatStatusListener,
 } from "./services/web-chat";
 
 /**
@@ -204,6 +207,18 @@ function openTerminalAt(cwd: string): void {
  * renderer is not a trust boundary, so nothing it sends is taken on faith.
  */
 export function registerIpcHandlers(): void {
+  // Relay every web chat status change to all open renderer windows. The
+  // status is produced inside `web-chat.ts` and only changes on send start,
+  // pause, resume, and end, so pushing to every window is cheap and keeps
+  // the header's indicator live without a polling loop in the renderer.
+  setWebChatStatusListener((statuses) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.webContents.send(IpcChannel.WebChatStatusChanged, statuses);
+      }
+    }
+  });
+
   ipcMain.handle(
     IpcChannel.PickDirectory,
     async (event): Promise<string | null> => {
@@ -609,6 +624,13 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.WebChatCancel, async (): Promise<void> => {
     cancelWebChat();
   });
+
+  ipcMain.handle(
+    IpcChannel.WebChatStatusGet,
+    async (): Promise<Record<WebChatTargetId, WebChatStatus>> => {
+      return getWebChatStatuses();
+    },
+  );
 
   /* ---------------------------------------------------------------------- *
    * Research mode

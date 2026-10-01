@@ -1,6 +1,7 @@
-import { BrowserWindow, clipboard } from "electron";
+import { app, BrowserWindow, clipboard, type WebContents } from "electron";
 import type {
   WebChatSendResult,
+  WebChatStatus,
   WebChatTargetId,
   WebChatTargetInfo,
 } from "@shared/types";
@@ -46,6 +47,90 @@ import type {
  */
 
 const PARTITION = "persist:AnythingButProPlan-webchat";
+
+/**
+ * Google blocks OAuth sign-in from embedded webviews. Presenting a
+ * laundered Chrome UA — which is what `plainChromeUserAgent` produces, a
+ * UA byte-shaped like stock Chrome with the Electron and app tokens
+ * stripped — is what Google rejects. Orca's isolated harness measured this
+ * both ways: a byte-for-byte stock Chrome UA fails with
+ * `accounts.google.com/v3/signin/rejected`, while an untouched Electron UA
+ * (or any UA carrying an extra product token) reaches the password page.
+ *
+ * Google also rejects a Safari-shaped UA with Client Hints stripped. The
+ * combination that works is a Firefox identity on the sign-in hosts, with
+ * no `sec-ch-ua*` headers at all, because that is exactly what a real
+ * Firefox sends. See the Orca issue and the follow-up PR that shipped this
+ * fix.
+ *
+ * Pinned to Firefox 138 rather than a computed current version: a UA that
+ * advertises a version newer than any real Firefox release trips Google's
+ * anomaly detection. 138 is a real, released version.
+ */
+const GOOGLE_AUTH_FIREFOX_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0";
+
+/**
+ * Hosts whose requests must carry the Firefox identity. `accounts.google.com`
+ * is the sign-in host itself; the others are the Google surfaces the sign-in
+ * flow redirects through (consent, 2FA, account chooser). Matching by host
+ * suffix rather than by exact string keeps a future subdomain working
+ * without a code change.
+ */
+/**
+ * Only the sign-in hosts. `myaccount.google.com` and `gds.google.com` are
+ * post-auth surfaces — Google's own reference implementation keeps the
+ * profile's real identity on them, and Orca's `browser-google-auth-ua.test.ts`
+ * asserts `isGoogleAuthUrl('https://myaccount.google.com/')` is `false`.
+ * Presenting a Firefox UA there would make the session look like a different
+ * browser immediately after sign-in completes.
+ */
+const GOOGLE_AUTH_HOSTS = ["accounts.google.com", "accounts.youtube.com"];
+
+function isGoogleAuthHost(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return GOOGLE_AUTH_HOSTS.some(
+      (candidate) => host === candidate || host.endsWith(`.${candidate}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Attach the Google-auth UA switch to every WebContents the app creates —
+ * the main chat windows and the OAuth popups alike.
+ *
+ * The previous fix only rewrote the outgoing request header via
+ * `onBeforeSendHeaders`. That covers the wire, but it does not cover
+ * `navigator.userAgent`, which is what Google's sign-in script reads and
+ * which is served from the WebContents UA, not from the request header. A
+ * request that says Firefox while `navigator.userAgent` says Chrome is a
+ * sharper bot signal than either value alone, and that mismatch is why the
+ * header-only fix still produced `accounts.google.com/v3/signin/rejected`.
+ *
+ * The listener fires before the request for the new document is sent, so
+ * the very first request to `accounts.google.com` already carries the
+ * Firefox identity at both layers. `web-contents-created` fires for every
+ * WebContents — including popups opened by the chat site's own "Sign in
+ * with Google" button — so no per-window registration is needed in
+ * `ensureWindow`.
+ */
+app.on("web-contents-created", (_event, contents: WebContents) => {
+  contents.on(
+    "did-start-navigation",
+    (_navEvent, url, isInPlace, isMainFrame) => {
+      // In-page navigations (hash changes, `history.pushState`) do not
+      // issue a new document request, so the UA does not need flipping for
+      // them and flipping it would churn the WebContents for nothing.
+      if (!isMainFrame || isInPlace) return;
+      contents.setUserAgent(
+        isGoogleAuthHost(url) ? GOOGLE_AUTH_FIREFOX_UA : plainChromeUserAgent(),
+      );
+    },
+  );
+});
 
 /** Time allowed for an upload to land before the prompt is sent. */
 const UPLOAD_GRACE_MS = 10_000;
@@ -256,6 +341,53 @@ export function listWebChatTargets(): WebChatTargetInfo[] {
   }));
 }
 
+/**
+ * Per-target status tracking.
+ *
+ * The page script cannot push events back to the main process — the
+ * `executeJavaScript` call resolves once, when the whole async function
+ * returns — so the script maintains a global (`window.__AnythingButProPlanWebChatStatus`)
+ * and the main process polls it while a send is in flight. This module owns
+ * both ends of that channel and exposes a listener so `ipc.ts` can relay
+ * the status to every open renderer.
+ */
+const statuses = new Map<WebChatTargetId, WebChatStatus>();
+let statusListener:
+  | ((statuses: Record<WebChatTargetId, WebChatStatus>) => void)
+  | null = null;
+
+/** Snapshot of every target's status, filling in `idle` for untouched ones. */
+export function getWebChatStatuses(): Record<WebChatTargetId, WebChatStatus> {
+  const result = {} as Record<WebChatTargetId, WebChatStatus>;
+  for (const target of WEB_CHAT_TARGETS) {
+    result[target.id] = statuses.get(target.id) ?? "idle";
+  }
+  return result;
+}
+
+/**
+ * Register the listener that will receive every status change. Called once
+ * from `registerIpcHandlers`; the listener fans the update out to every
+ * open renderer window.
+ */
+export function setWebChatStatusListener(
+  listener: ((statuses: Record<WebChatTargetId, WebChatStatus>) => void) | null,
+): void {
+  statusListener = listener;
+}
+
+/**
+ * Update one target's status. Short-circuits when the value is unchanged so
+ * the poller's 500 ms ticks do not flood the renderer with identical
+ * payloads — only real transitions (idle → working, working → paused,
+ * …) reach the IPC bridge.
+ */
+function setStatus(target: WebChatTargetId, status: WebChatStatus): void {
+  if (statuses.get(target) === status) return;
+  statuses.set(target, status);
+  statusListener?.(getWebChatStatuses());
+}
+
 const windows = new Map<WebChatTargetId, BrowserWindow>();
 
 /**
@@ -307,7 +439,48 @@ async function ensureWindow(target: WebChatTarget): Promise<BrowserWindow> {
     },
   });
 
+  // The session default is what a freshly-created WebContents (an OAuth
+  // popup, for example) starts with. Set it once so every window in the
+  // partition begins with the Chrome-shaped identity, and let the
+  // `did-start-navigation` handler above flip individual navigations to
+  // Firefox when they target a Google sign-in host.
+  win.webContents.session.setUserAgent(plainChromeUserAgent());
   win.webContents.setUserAgent(plainChromeUserAgent());
+
+  // Present a Firefox identity on Google's sign-in hosts and leave the
+  // Chrome-shaped UA on every other host. The Chrome UA is what keeps
+  // Cloudflare Turnstile happy on the chat sites themselves; the Firefox
+  // UA is what gets Google's sign-in past the embedded-browser check. A
+  // single UA cannot do both, so the switch is per-request.
+  //
+  // Client Hints headers are stripped on the Google requests because a real
+  // Firefox sends none. Leaving `sec-ch-ua` in place alongside a Firefox UA
+  // is an immediate giveaway — a real Firefox and a `sec-ch-ua` header
+  // cannot both be true — and Google rejects the mismatch.
+  win.webContents.session.webRequest.onBeforeSendHeaders(
+    { urls: ["https://*/*"] },
+    (details, callback) => {
+      const headers = details.requestHeaders;
+      if (isGoogleAuthHost(details.url)) {
+        for (const key of Object.keys(headers)) {
+          const lower = key.toLowerCase();
+          if (lower === "user-agent") {
+            headers[key] = GOOGLE_AUTH_FIREFOX_UA;
+          } else if (
+            lower === "sec-ch-ua" ||
+            lower === "sec-ch-ua-mobile" ||
+            lower === "sec-ch-ua-platform" ||
+            lower === "sec-ch-ua-full-version-list"
+          ) {
+            delete headers[key];
+          }
+        }
+        callback({ requestHeaders: headers });
+        return;
+      }
+      callback({ requestHeaders: headers });
+    },
+  );
 
   // Some sites gate `navigator.clipboard.writeText` behind the Clipboard
   // permission even when the document is focused, and Electron's default
@@ -487,6 +660,7 @@ function buildScript(target: WebChatTarget, prompt: string): string {
   const prompt = ${JSON.stringify(prompt)};
 
   window.__AnythingButProPlanWebChatAbort = false;
+  window.__AnythingButProPlanWebChatStatus = 'working';
   const aborted = () => window.__AnythingButProPlanWebChatAbort === true;
 
   let input = null;
@@ -521,6 +695,20 @@ function buildScript(target: WebChatTarget, prompt: string): string {
   await sleep(400);
   if (aborted()) return { ok: false, error: 'Cancelled.' };
 
+  // Snapshot the transcript before submitting so the loop below only ever
+  // reads the reply to *this* turn. Response selectors match every
+  // assistant message in the DOM, and the previous turn's reply stays
+  // rendered while the new one is being generated. Reading that old reply,
+  // seeing it never change, and returning stable: true after two seconds
+  // is exactly how the indicator flipped to idle while the model was still
+  // thinking — the scrape returned the prior answer and the send ended.
+  const baselineNodes = queryAll(respSels);
+  const baselineCount = baselineNodes.length;
+  const baselineText =
+    baselineNodes.length > 0
+      ? cleanAssistantText(baselineNodes[baselineNodes.length - 1])
+      : '';
+
   const sendBtn = queryFirst(sendSels);
   const canClick = sendBtn && !sendBtn.disabled && sendBtn.getAttribute('aria-disabled') !== 'true';
   if (canClick) {
@@ -548,6 +736,39 @@ function buildScript(target: WebChatTarget, prompt: string): string {
     return false;
   };
 
+  // Some sites — DeepSeek after a long reasoning phase especially — stop
+  // mid-reply and render a "Continue" button rather than streaming to
+  // completion. The reply is not finished and will not finish until the
+  // user clicks that button. Treating this as "stable, complete" would
+  // silently hand back a truncated reply; treating it as "still working"
+  // would let the loop wait out its full timeout. Detect it explicitly so
+  // the loop keeps polling and the main process can flip the renderer's
+  // indicator to "paused".
+  const isPaused = () => {
+    const btns = document.querySelectorAll('button, [role="button"]');
+    for (const b of btns) {
+      if (b.offsetParent === null) continue;
+      const label = ((b.getAttribute('aria-label') || '') + ' ' + (b.textContent || '')).trim().toLowerCase();
+      if (/^(continue|resume|continue generating|keep going)$/.test(label)) return true;
+    }
+    return false;
+  };
+
+  // A visible element whose class or aria names a common "model is busy"
+  // state — a reasoning spinner, a "Thinking…" label, an aria-busy
+  // container. Used to suppress the stability counter while the model is
+  // still reasoning, since a placeholder's text does not change and would
+  // otherwise be mistaken for a finished reply after two seconds.
+  const isBusyIndicator = () => {
+    const els = document.querySelectorAll(
+      '[class*="thinking" i], [class*="reasoning" i], [class*="generating" i], [class*="loading" i], [class*="spinner" i], [aria-busy="true"]',
+    );
+    for (const el of els) {
+      if (el.offsetParent !== null) return true;
+    }
+    return false;
+  };
+
   const started = Date.now();
   const MAX_MS = 8 * 60 * 1000;
   let lastText = '';
@@ -560,15 +781,57 @@ function buildScript(target: WebChatTarget, prompt: string): string {
     await sleep(500);
 
     const nodes = queryAll(respSels);
+    // The reply to *this* turn exists only when either a new element has
+    // appeared since the baseline or the last element's text has changed
+    // from it. Both are checked because sites differ: some append a fresh
+    // assistant message per turn, others replace the last element's
+    // content in place. Without this check the loop reads the previous
+    // turn's reply — which never changes — and reports it as the answer
+    // after two stable seconds, which is exactly the early-return that
+    // flipped the indicator to idle while the model was still thinking.
+    const lastNodeText =
+      nodes.length > 0
+        ? cleanAssistantText(nodes[nodes.length - 1])
+        : '';
+    const hasNewTurn =
+      nodes.length > baselineCount || lastNodeText !== baselineText;
+    if (!hasNewTurn) {
+      // Still the previous turn (or nothing rendered yet). The model may
+      // be in its reasoning phase, or the site has not created the new
+      // message element. Stay in working and keep polling — do not fall
+      // through to the stability check, which has nothing to measure yet.
+      window.__AnythingButProPlanWebChatStatus = 'working';
+      continue;
+    }
+
     let current = '';
     for (let i = nodes.length - 1; i >= 0; i--) {
       const t = cleanAssistantText(nodes[i]);
       if (t) { current = t; break; }
     }
-    if (!current) continue;
+    if (!current) {
+      // The new message element exists but is still empty — the model is
+      // thinking and has not emitted text yet.
+      window.__AnythingButProPlanWebChatStatus = 'working';
+      continue;
+    }
     sawAny = true;
 
-    if (current === lastText && !isGenerating()) {
+    const paused = isPaused();
+    // Some sites render a placeholder ("Thinking…", a spinner) in the
+    // reply element while the model reasons. That text does not change,
+    // so the stability counter would fire on it and return the
+    // placeholder as the finished answer. A visible element whose class
+    // or aria names a common busy state suppresses the counter.
+    const busyPlaceholder = isBusyIndicator();
+    window.__AnythingButProPlanWebChatStatus = paused ? 'paused' : 'working';
+
+    if (
+      current === lastText &&
+      !isGenerating() &&
+      !paused &&
+      !busyPlaceholder
+    ) {
       stableMs += 500;
       if (stableMs >= 2000) {
         // The reply has settled. Report it as stable: true so the main
@@ -774,6 +1037,28 @@ async function deliverPrompt(
     // The page has not finished loading; the script sets the flag itself.
   }
 
+  // Mark this target as working immediately, and poll the page-side status
+  // flag while the script runs. `executeJavaScript` resolves only once —
+  // when the entire async page function returns — so a page-side global is
+  // the only way to observe intermediate states. The poller is cleared in
+  // the `finally` below, so the indicator always returns to idle when the
+  // send ends, however it ends.
+  setStatus(target.id, "working");
+  const statusPoller = setInterval(() => {
+    win.webContents
+      .executeJavaScript(
+        'window.__AnythingButProPlanWebChatStatus || "working"',
+        true,
+      )
+      .then((value: unknown) => {
+        if (value === "paused") setStatus(target.id, "paused");
+        else setStatus(target.id, "working");
+      })
+      .catch(() => {
+        // The page is navigating or gone; leave the status as-is.
+      });
+  }, 500);
+
   try {
     const raw = (await win.webContents.executeJavaScript(
       buildScript(target, prompt),
@@ -825,6 +1110,9 @@ async function deliverPrompt(
     return { ok: true, text: scraped };
   } catch (error) {
     return { ok: false, error: `${target.label}: ${describe(error)}` };
+  } finally {
+    clearInterval(statusPoller);
+    setStatus(target.id, "idle");
   }
 }
 
