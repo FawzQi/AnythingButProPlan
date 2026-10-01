@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ReactElement } from "react";
-import ReactDiffViewer from "react-diff-viewer-continued";
 import { useAppStore } from "../../stores/app-store";
-import { Banner, Button } from "../../lib/ui";
+import { DiffModal } from "../DiffModal";
 
 interface DiffViewerProps {
   path: string;
@@ -36,53 +35,15 @@ export function DiffViewer({
     };
   }, [projectRoot, path, content]);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex flex-col bg-black/60 p-6"
-      role="dialog"
-      aria-modal="true"
-    >
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-[#2c3038] bg-[#16181d]">
-        <header className="flex shrink-0 items-center justify-between border-b border-[#2c3038] px-3 py-2">
-          <h2 className="truncate font-mono text-sm text-slate-200">{path}</h2>
-          <Button variant="ghost" onClick={onClose}>
-            Close
-          </Button>
-        </header>
-        <div className="min-h-0 flex-1 overflow-auto">
-          {error ? (
-            <div className="p-3">
-              <Banner tone="error">{error}</Banner>
-            </div>
-          ) : original === null ? (
-            <p className="p-3 text-xs text-slate-500">Loading…</p>
-          ) : (
-            <ReactDiffViewer
-              oldValue={original}
-              newValue={content}
-              splitView
-              useDarkTheme
-              // `showDiffOnly` defaults to `true`, which collapses every
-              // unchanged run into a "… N lines hidden …" spacer and shows
-              // only the hunks that differ. The user asked to see the whole
-              // file with the change highlighted in place, so the full
-              // content is rendered and the diff markers still mark the
-              // added/removed lines.
-              showDiffOnly={false}
-              leftTitle="On disk"
-              rightTitle="Proposed"
-            />
-          )}
-        </div>
-      </div>
-    </div>
+    <DiffModal
+      path={path}
+      left={original}
+      right={content}
+      leftTitle="On disk"
+      rightTitle="Proposed"
+      error={error}
+      onClose={onClose}
+    />
   );
 }

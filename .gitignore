@@ -43,3 +43,11 @@ Thumbs.db
 CLAUDE.md
 *.bak
 stash.txt
+
+./gitnexus
+.claude
+AGENTS.md
+
+# Research mode derived data — rebuildable, not source.
+converted/
+.index/

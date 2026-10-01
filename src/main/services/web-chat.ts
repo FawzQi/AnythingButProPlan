@@ -314,11 +314,24 @@ async function ensureWindow(target: WebChatTarget): Promise<BrowserWindow> {
   // permission handler resolves a request as "denied" unless a handler is
   // registered. That silently breaks the copy path and drops us onto the
   // DOM scrape, which is exactly the failure mode this whole file exists to
-  // avoid. Register a permissive handler on the shared session so a focused
-  // page can always write to the clipboard.
+  // avoid.
+  //
+  // The handler therefore grants *only* the one permission the copy path
+  // needs and denies everything else. Granting `true` for every permission
+  // would be broader than the comment above it justifies: this handler is
+  // registered on the shared `persist:` partition, so a compromised or
+  // ad-injected page on any of the six chat sites would be able to reach
+  // the camera, microphone, geolocation, notifications, MIDI, HID, USB,
+  // and serial ports without a prompt. A chat site has no legitimate reason
+  // to ask for any of those inside this app.
+  //
+  // The name Electron emits for the sanitized clipboard-write path is
+  // `clipboard-sanitized-write`. The app never asks the page to *read* the
+  // clipboard back — the main process reads the OS clipboard itself — so no
+  // read permission is granted.
   win.webContents.session.setPermissionRequestHandler(
-    (_wc, _permission, callback) => {
-      callback(true);
+    (_wc, permission, callback) => {
+      callback(permission === "clipboard-sanitized-write");
     },
   );
 

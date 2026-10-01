@@ -8,8 +8,6 @@ import { Banner, Button, Panel } from "../../lib/ui";
 import { SourceControl } from "../SourceControl";
 import { AiSettingsPanel } from "./AiSettingsPanel";
 
-const TOKEN_WARNING_THRESHOLD = 100_000;
-
 function TabButton({
   active,
   onClick,
@@ -93,17 +91,6 @@ function PromptTab(): ReactElement {
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      {displayTokens > TOKEN_WARNING_THRESHOLD ? (
-        <div className="p-2">
-          <Banner tone="warn">
-            Prompt is ~{displayTokens.toLocaleString()} tokens, above the{" "}
-            {TOKEN_WARNING_THRESHOLD.toLocaleString()} token guidance. Most
-            models will still accept it, but expect slower or truncated
-            responses.
-          </Banner>
-        </div>
-      ) : null}
-
       {unreadable.length > 0 ? (
         <div className="p-2">
           <Banner tone="warn">

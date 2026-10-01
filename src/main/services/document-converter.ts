@@ -212,19 +212,28 @@ async function copyDirectory(source: string, destination: string): Promise<numbe
   return copied
 }
 
-interface Extraction {
-  markdown: string
-  /** Absolute path of the extractor's image directory, when it made one. */
-  imagesDir: string | null
-  /** Warning to surface to the user, e.g. the fallback's layout caveat. */
-  warning?: string
-  /** Which extractor produced the markdown, recorded for reproducibility. */
-  extractor: 'docling' | 'fast' | 'passthrough'
-}
+/**
+ * The result of one extraction. A tagged union rather than an optional
+ * `failed` field: the two shapes are mutually exclusive, and a tag makes
+ * the consumer's branch exhaustive without relying on `'failed' in ...`.
+ */
+type Extraction =
+  | {
+      ok: true
+      markdown: string
+      /** Absolute path of the extractor's image directory, when it made one. */
+      imagesDir: string | null
+      /** Warning to surface to the user, e.g. the fallback's layout caveat. */
+      warning?: string
+      /** Which extractor produced the markdown, recorded for reproducibility. */
+      extractor: 'docling' | 'fast' | 'passthrough'
+    }
+  | { ok: false; reason: string }
 
 /** Text files need no extraction; they are already markdown-ish. */
 async function readPlainText(absolutePath: string): Promise<Extraction> {
   return {
+    ok: true,
     markdown: await fs.readFile(absolutePath, 'utf8'),
     imagesDir: null,
     extractor: 'passthrough',
@@ -253,11 +262,12 @@ function tail(text: string, limit: number): string {
 async function extractFast(
   absolutePath: string,
   workDir: string,
-): Promise<Extraction | { failed: string }> {
+): Promise<Extraction> {
   const script = pythonScriptPath()
   if (!(await exists(script))) {
     return {
-      failed: `Fast extractor script is missing at ${script}. Reinstall the app, or switch to the Docling engine.`,
+      ok: false,
+      reason: `Fast extractor script is missing at ${script}. Reinstall the app, or switch to the Docling engine.`,
     }
   }
   const result = await run(
@@ -267,23 +277,26 @@ async function extractFast(
   )
   if (result.missing) {
     return {
-      failed:
+      ok: false,
+      reason:
         'python3 is not available. Install Python 3 (the extractor needs pdftext or pypdfium2), or switch to the Docling engine.',
     }
   }
   if (result.timedOut) {
     return {
-      failed: `The fast extractor timed out after ${Math.round(PYTHON_TIMEOUT_MS / 60_000)} minutes.`,
+      ok: false,
+      reason: `The fast extractor timed out after ${Math.round(PYTHON_TIMEOUT_MS / 60_000)} minutes.`,
     }
   }
   if (result.code !== 0) {
     return {
-      failed: `The fast extractor failed: ${tail(result.stderr, 300) || `exit code ${String(result.code)}`}`,
+      ok: false,
+      reason: `The fast extractor failed: ${tail(result.stderr, 300) || `exit code ${String(result.code)}`}`,
     }
   }
   const markdownPath = await findFirstWithExtension(workDir, '.md')
   if (markdownPath === null) {
-    return { failed: 'The fast extractor produced no markdown.' }
+    return { ok: false, reason: 'The fast extractor produced no markdown.' }
   }
   // Which backend ran changes how a two-column paper reads, so it goes into
   // the warning the user sees rather than staying in the logs.
@@ -291,6 +304,7 @@ async function extractFast(
     ? 'pypdfium2 (no layout pass)'
     : 'pdftext'
   return {
+    ok: true,
     markdown: await fs.readFile(markdownPath, 'utf8'),
     imagesDir: null,
     extractor: 'fast',
@@ -319,17 +333,19 @@ async function extractFast(
 async function extractWithDocling(
   absolutePath: string,
   workDir: string,
-): Promise<Extraction | { failed: string }> {
+): Promise<Extraction> {
   const script = doclingScriptPath()
   if (!(await exists(script))) {
     return {
-      failed: `Docling wrapper script is missing at ${script}. Reinstall the app, or switch the extractor to the fast engine.`,
+      ok: false,
+      reason: `Docling wrapper script is missing at ${script}. Reinstall the app, or switch the extractor to the fast engine.`,
     }
   }
   const venvPython = path.join(DOCLING_VENV, 'bin', 'python3')
   if (!(await exists(venvPython))) {
     return {
-      failed:
+      ok: false,
+      reason:
         `Docling's virtualenv was not found at ${DOCLING_VENV}. Create it ` +
         `(\`python3 -m venv ${DOCLING_VENV} && ${DOCLING_VENV}/bin/pip install docling\`), ` +
         `set DOCLING_VENV to its root, or switch the extractor to the fast engine.`,
@@ -342,22 +358,25 @@ async function extractWithDocling(
   )
   if (result.missing) {
     return {
-      failed: `Docling's venv python is not executable at ${venvPython}.`,
+      ok: false,
+      reason: `Docling's venv python is not executable at ${venvPython}.`,
     }
   }
   if (result.timedOut) {
     return {
-      failed: `Docling timed out after ${Math.round(DOCLING_TIMEOUT_MS / 60_000)} minutes.`,
+      ok: false,
+      reason: `Docling timed out after ${Math.round(DOCLING_TIMEOUT_MS / 60_000)} minutes.`,
     }
   }
   if (result.code !== 0) {
     return {
-      failed: `Docling failed: ${tail(result.stderr, 300) || `exit code ${String(result.code)}`}`,
+      ok: false,
+      reason: `Docling failed: ${tail(result.stderr, 300) || `exit code ${String(result.code)}`}`,
     }
   }
   const markdownPath = await findFirstWithExtension(workDir, '.md')
   if (markdownPath === null) {
-    return { failed: 'Docling produced no markdown.' }
+    return { ok: false, reason: 'Docling produced no markdown.' }
   }
   // The wrapper creates `images/` only when it actually wrote a figure out,
   // so the directory's absence is the honest signal that there is nothing
@@ -365,6 +384,7 @@ async function extractWithDocling(
   const imagesDir = path.join(workDir, 'images')
   const hasImages = await exists(imagesDir)
   return {
+    ok: true,
     markdown: await fs.readFile(markdownPath, 'utf8'),
     imagesDir: hasImages ? imagesDir : null,
     extractor: 'docling',
@@ -376,7 +396,7 @@ async function extract(
   relativePath: string,
   workDir: string,
   engine: ExtractionEngine,
-): Promise<Extraction | { failed: string }> {
+): Promise<Extraction> {
   if (!PDF_EXTENSIONS.has(path.extname(relativePath).toLowerCase())) {
     return readPlainText(absolutePath)
   }
@@ -554,8 +574,8 @@ export async function convertDocuments(
         workDir,
         engine,
       )
-      if ('failed' in extraction) {
-        throw new Error(extraction.failed)
+      if (!extraction.ok) {
+        throw new Error(extraction.reason)
       }
 
       await fs.rm(outDir, { recursive: true, force: true })

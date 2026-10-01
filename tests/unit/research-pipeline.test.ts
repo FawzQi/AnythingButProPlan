@@ -177,6 +177,43 @@ describe("conversion engine guards", () => {
     expect(result.failed[0]?.error).toMatch(/does not extract figures/);
     expect(result.documents[0]?.convertedExists).toBe(false);
   });
+
+  it("surfaces an extraction failure through the tagged Extraction union", async () => {
+    // `engine: "auto"` routes a PDF to `extractWithDocling`. The wrapper
+    // script ships with the repo, but the virtualenv at `DOCLING_VENV`
+    // (default `/data/docling-env`) is not installed in a fresh checkout,
+    // so the extractor returns the failure half of the `Extraction` union
+    // — `{ ok: false, reason }` — rather than throwing. This test asserts
+    // the discriminant is consumed correctly end to end: the failure
+    // variant's `reason` reaches `convertDocuments`, which records it
+    // against the document. If the discriminant were ever mismatched, the
+    // `if (!extraction.ok)` branch would not fire and the test would fail
+    // on a missing `result.failed` entry rather than a specific message.
+    await fs.writeFile(
+      path.join(root, "docs", "paper.pdf"),
+      "%PDF-1.4\nfake body\n",
+    );
+
+    const result = await convertDocuments({
+      projectRoot: root,
+      docPaths: [],
+      mode: "text",
+      engine: "auto",
+      webChatTarget: "deepseek",
+      onProgress: () => {},
+    });
+
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]?.path).toBe("paper.pdf");
+    // Every failure path out of `extractWithDocling` names Docling: the
+    // wrapper script, the venv, the CLI's own error, or the timeout. The
+    // matcher is loose on purpose so the test survives a dev box that has
+    // Docling installed — a real docling failure still says "Docling".
+    expect(result.failed[0]?.error).toMatch(/Docling/);
+    const entry = result.documents.find((d) => d.path === "paper.pdf");
+    expect(entry?.status).toBe("failed");
+    expect(entry?.convertedExists).toBe(false);
+  });
 });
 
 describe("ensureGitignore", () => {

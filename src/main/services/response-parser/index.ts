@@ -17,15 +17,26 @@ export {
 } from './markdown-parser'
 export { resolvePath, normalizePath } from './path-heuristics'
 
-function toParsedFile(block: CodeBlock, path: string | null, source: ParsedFile['pathSource'], ambiguous: boolean): ParsedFile {
-  return {
-    path,
-    content: block.content,
+/**
+ * Build a `ParsedFile` from a code block and the path the heuristics found
+ * for it. A null path means the block reaches the UI for manual mapping
+ * (`kind: 'unresolved'`); anything else is a full-content entry.
+ */
+function toParsedFile(
+  block: CodeBlock,
+  path: string | null,
+  source: ParsedFile['pathSource'],
+): ParsedFile {
+  const common = {
+    rawBlock: block.rawBlock,
     language: block.language,
     pathSource: source,
-    ambiguous,
-    rawBlock: block.rawBlock,
+    content: block.content,
   }
+  if (path === null) {
+    return { ...common, kind: 'unresolved' as const, path: null }
+  }
+  return { ...common, kind: 'full' as const, path }
 }
 
 /**
@@ -92,10 +103,20 @@ const TERMINAL_HEADING =
 /**
  * Opening marker of the delimited file-entry section the output contract
  * now emits. Matches a line of the shape `===Files===` — two or more `=`
- * on each side of the keyword, nothing but whitespace around it, any case.
- * The matching terminator is `SECTION_CLOSE` below.
+ * on each side of the keyword, nothing but whitespace around it, any case —
+ * but only at the very start of the response (after optional leading blank
+ * lines). The matching terminator is `SECTION_CLOSE` below.
+ *
+ * Deliberately no `m` flag: a `===Files===` line anywhere in the response
+ * is almost always part of the output instructions the prompt itself
+ * carries. The prompt is a legitimate input — a user can paste it back
+ * into the response box — and echoing it produces a `===Files===` line
+ * inside the prompt's own prose. Treating that line as the opener sliced
+ * away every real file entry above it, which is how the round-trip test
+ * failed. A response that has lost its opener still works through the
+ * terminal-heading fallback below.
  */
-const FILES_SECTION_OPEN = /^[ \t]*={2,}\s*Files\s*={2,}[ \t]*$/im
+const FILES_SECTION_OPEN = /^[ \t]*={2,}\s*Files\s*={2,}[ \t]*(?:\r?\n|$)/i
 
 /**
  * Terminator of a delimited section. Deliberately exact: six `=` on a line
@@ -127,10 +148,13 @@ const SECTION_CLOSE = /^[ \t]*={6}[ \t]*$/m
  * preserving the existing degraded-mode behavior.
  */
 function filesSection(raw: string): string {
-  const open = FILES_SECTION_OPEN.exec(raw)
-  if (open) {
-    const bodyStart = open.index + open[0].length
-    const rest = raw.slice(bodyStart)
+  // Strip leading blank lines so a response that opens with whitespace still
+  // matches the opener anchored at the start of the string.
+  const trimmed = raw.replace(/^(?:[ \t]*\r?\n)*/, '')
+
+  const open = FILES_SECTION_OPEN.exec(trimmed)
+  if (open && open.index === 0) {
+    const rest = trimmed.slice(open[0].length)
     const close = SECTION_CLOSE.exec(rest)
     if (close) return rest.slice(0, close.index)
     // No close found. Fall through to the heading-based slice below, which
@@ -192,15 +216,16 @@ export function parseResponse(raw: string): ParseResult {
   const deleteEntries: ParsedFile[] = extractDeletePaths(scan)
     .map((candidate) => normalizePath(candidate))
     .filter((path): path is string => path !== null)
-    .map((path) => ({
-      path,
-      content: '',
-      language: null,
-      pathSource: 'delete-header',
-      ambiguous: false,
-      rawBlock: `Delete: ${path}`,
-      delete: true,
-    }))
+    .map(
+      (path): ParsedFile => ({
+        kind: 'delete',
+        path,
+        content: '',
+        language: null,
+        pathSource: 'delete-header',
+        rawBlock: `Delete: ${path}`,
+      }),
+    )
 
   if (HAS_PATCH_MARKERS.test(scan)) {
     const sections = extractSearchReplaceSections(scan)
@@ -213,11 +238,11 @@ export function parseResponse(raw: string): ParseResult {
         continue
       }
       usable.push({
+        kind: 'patch',
         path: normalized,
         content: renderPatches(section.patches),
         language: null,
         pathSource: 'file-header',
-        ambiguous: false,
         rawBlock: section.rawBlock,
         patches: section.patches,
       })
@@ -259,9 +284,7 @@ export function parseResponse(raw: string): ParseResult {
       if (insidePatch) continue
       const hint = resolvePath(block)
       if (hint.path === null) continue
-      fullContentFiles.push(
-        toParsedFile(block, hint.path, hint.source, false),
-      )
+      fullContentFiles.push(toParsedFile(block, hint.path, hint.source))
     }
 
     if (usable.length > 0 || fullContentFiles.length > 0) {
@@ -307,7 +330,9 @@ export function parseResponse(raw: string): ParseResult {
     return {
       files: [
         ...deleteEntries,
-        ...resolved.map((entry) => toParsedFile(entry.block, entry.hint.path, entry.hint.source, false)),
+        ...resolved.map((entry) =>
+          toParsedFile(entry.block, entry.hint.path, entry.hint.source),
+        ),
       ],
       strategy: 'markdown',
       warnings,
@@ -325,7 +350,7 @@ export function parseResponse(raw: string): ParseResult {
         rejected += 1
         continue
       }
-      usable.push(toParsedFile(block, hint.path, hint.source, false))
+      usable.push(toParsedFile(block, hint.path, hint.source))
     }
     if (usable.length > 0) {
       if (rejected > 0) {
@@ -352,7 +377,7 @@ export function parseResponse(raw: string): ParseResult {
     `${blocks.length} code block(s) had no resolvable path and need a target file.`,
   )
   return {
-    files: hints.map((entry) => toParsedFile(entry.block, null, entry.hint.source, true)),
+    files: hints.map((entry) => toParsedFile(entry.block, null, entry.hint.source)),
     strategy: 'user-assisted',
     warnings,
   }

@@ -22,11 +22,22 @@ describe('extractCodeBlocks', () => {
     expect(blocks[0]?.content).toBe('const a = 1\nconst b = 2')
   })
 
-  it('accepts tildes and captures three lines of preceding text', () => {
+  it('accepts tildes and captures the preceding text', () => {
     const blocks = extractCodeBlocks('one\ntwo\nthree\nfour\n~~~py\nx = 1\n~~~')
     expect(blocks[0]?.language).toBe('py')
-    expect(blocks[0]?.precedingText).toBe('two\nthree\nfour')
+    // The window is sized to cover the output contract's header + blank
+    // line + fence plus drift; with four preceding lines, all four fit.
+    expect(blocks[0]?.precedingText).toBe('one\ntwo\nthree\nfour')
     expect(blocks[0]?.startLine).toBe(5)
+  })
+
+  it('caps the preceding text at the configured window size', () => {
+    const lines = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+    const input = `${lines.join('\n')}\n~~~py\nx = 1\n~~~`
+    const blocks = extractCodeBlocks(input)
+    // PRECEDING_WINDOW = 6, so only the last six lines before the fence
+    // are kept: c, d, e, f, g, h. The first two are outside the window.
+    expect(blocks[0]?.precedingText).toBe('c\nd\ne\nf\ng\nh')
   })
 
   it('does not treat an inline fence as an opener', () => {
@@ -61,13 +72,6 @@ describe('resolvePath', () => {
     rawBlock: '',
     startLine: 1,
     ...overrides,
-  })
-
-  it('prefers the explicit XML path over everything else', () => {
-    const hint = resolvePath(block({ content: '// File: wrong.ts\nconst a = 1' }), {
-      explicitPath: 'src/right.ts',
-    })
-    expect(hint).toEqual({ path: 'src/right.ts', source: 'xml', ambiguous: false })
   })
 
   it('marks a single-file hint as ambiguous rather than guessing a name', () => {

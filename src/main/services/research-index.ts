@@ -55,7 +55,7 @@ export async function buildIndex(
   const apiKey = await getApiKey('google')
   if (apiKey === null || apiKey === '') {
     throw new Error(
-      'The retrieval index needs a Google AI Studio key — text-embedding-004 is the ' +
+      `The retrieval index needs a Google AI Studio key — ${EMBEDDING_MODEL} is the ` +
         'embedding model this app builds with. Add the key in Settings.',
     )
   }

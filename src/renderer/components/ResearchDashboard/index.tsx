@@ -283,7 +283,7 @@ export function ResearchDashboard(): ReactElement {
               <p className="max-w-2xl leading-relaxed">
                 The index holds one vector per excerpt, built with Google{" "}
                 <code className="rounded bg-[#2a2f38] px-1">
-                  text-embedding-004
+                  gemini-embedding-001
                 </code>{" "}
                 at 768 dimensions. Rebuilding re-embeds every converted
                 document — it is the only operation in the app that costs

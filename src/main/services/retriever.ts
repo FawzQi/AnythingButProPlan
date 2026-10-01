@@ -139,8 +139,15 @@ async function rerank(
   if (apiKey === null || apiKey === '') {
     throw new Error(`No API key saved for ${providerId}.`)
   }
-  const model = await resolveModel(providerId, '')
   const provider = getProvider(providerId)
+  // Fall back to the provider's first seed model when the user has not
+  // chosen one. Passing an empty string through to the vendor produces a
+  // "model not found" failure at request time, and because the rerank pass
+  // is the last step before the prompt is built, that failure surfaces as
+  // a warning banner rather than an error the user can act on. The seed
+  // list is the same catalogue `Settings` shows, so the fallback is the
+  // model the picker would have defaulted to anyway.
+  const model = await resolveModel(providerId, provider.models[0] ?? '')
 
   const listing = shortlist
     .map(

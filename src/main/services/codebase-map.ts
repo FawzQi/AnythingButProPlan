@@ -134,20 +134,32 @@ function languageFor(filePath: string): LanguageFamily {
 }
 
 /**
- * The per-file skeleton. `preview` is used for config/data and doc files
- * where the shape matters less than the content; `signatures` is used for
- * code and holds one line per exported symbol. `lines` is optional because
- * assets are never read and so have no line count.
+ * The per-file skeleton. Each variant carries exactly the fields that are
+ * meaningful for its `kind`:
+ *
+ *   - `asset`  — path only. Assets are never read as text.
+ *   - `code`   — lines, imports, exported signatures.
+ *   - `config | data | doc` — lines plus a small prose preview.
+ *
+ * The discriminated union replaces the previous optional-field soup
+ * (`lines?`, `deps?`, `signatures?`, `preview?`), which permitted
+ * contradictory states such as a `code` entry with only a `preview`.
  */
-interface FileSkeleton {
-  path: string
-  kind: FileKind
-  lines?: number
-  deps?: string[]
-  signatures?: string[]
-  /** For config/data/doc: first few lines, truncated. */
-  preview?: string
-}
+type FileSkeleton =
+  | { kind: 'asset'; path: string }
+  | {
+      kind: 'code'
+      path: string
+      lines: number
+      deps: string[]
+      signatures: string[]
+    }
+  | {
+      kind: 'config' | 'data' | 'doc'
+      path: string
+      lines: number
+      preview: string
+    }
 
 const PREVIEW_LINES = 25
 const PREVIEW_MAX_CHARS = 800
@@ -289,7 +301,7 @@ async function skeletonFor(
   // for asset files to appear as a path with no content. Return early so no
   // file handle is opened at all.
   if (kind === 'asset') {
-    return { path: filePath, kind }
+    return { kind: 'asset', path: filePath }
   }
 
   let text: string
@@ -302,30 +314,27 @@ async function skeletonFor(
 
   if (kind === 'code') {
     const { deps, signatures } = extractCode(filePath, text)
-    return { path: filePath, kind, lines, deps, signatures }
+    return { kind: 'code', path: filePath, lines, deps, signatures }
   }
 
   // config / data / doc
   return {
-    path: filePath,
     kind,
+    path: filePath,
     lines,
     preview: firstNLines(text, PREVIEW_LINES, PREVIEW_MAX_CHARS),
   }
 }
 
 function formatSkeleton(s: FileSkeleton): string {
-  if (s.kind === 'asset') {
-    return `${s.path}  [asset]`
-  }
-  const header = `${s.path}  [${s.kind}, ${s.lines ?? 0} lines]`
-  const lines = [header]
+  if (s.kind === 'asset') return `${s.path}  [asset]`
 
   if (s.kind === 'code') {
-    if (s.deps && s.deps.length > 0) {
+    const lines = [`${s.path}  [code, ${s.lines} lines]`]
+    if (s.deps.length > 0) {
       lines.push(`  deps: ${s.deps.slice(0, 12).join(', ')}`)
     }
-    if (s.signatures && s.signatures.length > 0) {
+    if (s.signatures.length > 0) {
       for (const sig of s.signatures) lines.push(`  ${sig}`)
     } else {
       lines.push(`  (no exported symbols detected)`)
@@ -334,8 +343,9 @@ function formatSkeleton(s: FileSkeleton): string {
   }
 
   // config / data / doc
+  const lines = [`${s.path}  [${s.kind}, ${s.lines} lines]`]
   lines.push('  ---')
-  for (const ln of (s.preview ?? '').split('\n')) lines.push(`  ${ln}`)
+  for (const ln of s.preview.split('\n')) lines.push(`  ${ln}`)
   return lines.join('\n')
 }
 

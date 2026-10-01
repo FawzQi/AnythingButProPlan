@@ -5,6 +5,7 @@ import type {
   AiSettings,
   AiSettingsSaveRequest,
   AiSuggestion,
+  ApplyFileInput,
   ApplyResult,
   FileNode,
   GitStatus,
@@ -303,7 +304,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   suggestFiles: async () => {
-    const { projectRoot, tree, customPrompt, aiSettings } = get();
+    const { projectRoot, tree, customPrompt } = get();
     if (!projectRoot || !tree) {
       set({ error: "Open a project before asking the AI to suggest files." });
       return;
@@ -620,11 +621,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   setParsedPath: (index, path) => {
     const parseResult = get().parseResult;
     if (!parseResult) return;
-    const files = parseResult.files.map((file, current) =>
-      current === index
-        ? { ...file, path, pathSource: "user" as const, ambiguous: false }
-        : file,
-    );
+    // Only an `unresolved` entry can be given a path from the UI — the
+    // input that calls this action renders only when the entry has none.
+    const files = parseResult.files.map((file, current) => {
+      if (current !== index || file.kind !== "unresolved") return file;
+      return {
+        ...file,
+        kind: "full" as const,
+        path,
+        pathSource: "user" as const,
+      };
+    });
     const includes = { ...get().includes };
     delete includes[`#${index}`];
     includes[path] = includes[path] ?? true;
@@ -639,26 +646,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { projectRoot, parseResult, includes } = get();
     if (!projectRoot || !parseResult) return;
 
-    const files = parseResult.files
-      .map((file, index) => ({ file, key: parsedFileKey(file, index) }))
-      .filter(
-        (
-          entry,
-        ): entry is { file: ParsedFile & { path: string }; key: string } =>
-          entry.file.path !== null && includes[entry.key] === true,
-      )
-      .map((entry) => ({
-        path: entry.file.path,
-        content: entry.file.content,
-        // Patch files carry a SEARCH/REPLACE payload instead of full content;
-        // the applier branches on the presence of this field.
-        ...(entry.file.patches && entry.file.patches.length > 0
-          ? { patches: entry.file.patches }
-          : {}),
-        // A delete directive carries no payload at all — the flag alone
-        // tells the applier to remove the file.
-        ...(entry.file.delete === true ? { delete: true as const } : {}),
-      }));
+    const files: ApplyFileInput[] = [];
+    for (const [index, file] of parseResult.files.entries()) {
+      const key = parsedFileKey(file, index);
+      if (includes[key] !== true) continue;
+      // Unresolved entries have no target path yet — the user must supply
+      // one before the entry can be applied. Skipping here is what keeps
+      // the user-assisted strategy from erroring on every unresolved block.
+      if (file.kind === "unresolved") continue;
+      if (file.kind === "delete") {
+        files.push({ path: file.path, content: "", delete: true });
+        continue;
+      }
+      if (file.kind === "patch") {
+        files.push({
+          path: file.path,
+          content: file.content,
+          patches: file.patches,
+        });
+        continue;
+      }
+      files.push({ path: file.path, content: file.content });
+    }
 
     if (files.length === 0) {
       set({ error: "No files selected to apply." });

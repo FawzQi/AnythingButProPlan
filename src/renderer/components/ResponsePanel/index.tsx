@@ -63,9 +63,7 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
     if (!projectRoot || !parseResult) return;
     let cancelled = false;
     const checks = parseResult.files
-      .filter(
-        (file): file is typeof file & { path: string } => file.path !== null,
-      )
+      .filter((file) => file.kind !== "unresolved")
       .map((file) =>
         window.AnythingButProPlan.diffFile({
           projectRoot,
@@ -88,15 +86,14 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
   }, [projectRoot, parseResult]);
 
   const includable = (parseResult?.files ?? []).filter(
-    (file) => file.path !== null,
+    (file) => file.kind !== "unresolved",
   );
   const selectedCount = includable.filter(
     (file, index) => includes[parsedFileKey(file, index)] === true,
   ).length;
 
   const deleteCount = includable.filter(
-    (file, index) =>
-      file.delete === true && includes[parsedFileKey(file, index)] === true,
+    (file) => file.kind === "delete" && includes[parsedFileKey(file, 0)] === true,
   ).length;
   const writeCount = selectedCount - deleteCount;
 
@@ -184,21 +181,22 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
                 <tbody>
                   {parseResult.files.map((file, index) => {
                     const key = parsedFileKey(file, index);
-                    const known = file.path !== null;
-                    const patchCount = file.patches?.length ?? 0;
-                    const isPatch = patchCount > 0;
-                    const isDelete = file.delete === true;
-                    const action = !known
-                      ? "—"
-                      : existing[file.path] === undefined
-                        ? "…"
-                        : isDelete
-                          ? existing[file.path]
-                            ? "delete"
-                            : "not found"
-                          : existing[file.path]
-                            ? "overwrite"
-                            : "create";
+                    const path = file.kind === "unresolved" ? null : file.path;
+                    const isPatch = file.kind === "patch";
+                    const isDelete = file.kind === "delete";
+                    const patchCount = isPatch ? file.patches.length : 0;
+                    const action =
+                      path === null
+                        ? "—"
+                        : existing[path] === undefined
+                          ? "…"
+                          : isDelete
+                            ? existing[path]
+                              ? "delete"
+                              : "not found"
+                            : existing[path]
+                              ? "overwrite"
+                              : "create";
                     return (
                       <tr
                         key={key}
@@ -208,7 +206,7 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
                           <input
                             type="checkbox"
                             checked={includes[key] === true}
-                            disabled={!known}
+                            disabled={path === null}
                             onChange={(event) =>
                               toggleInclude(key, event.target.checked)
                             }
@@ -216,9 +214,9 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
                           />
                         </td>
                         <td className="py-1.5 pr-2">
-                          {known ? (
+                          {path !== null ? (
                             <span className="font-mono text-slate-200">
-                              {file.path}
+                              {path}
                             </span>
                           ) : (
                             <input
@@ -261,13 +259,10 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
                         <td className="py-1.5">
                           <Button
                             variant="ghost"
-                            disabled={!known || isDelete}
+                            disabled={path === null || isDelete}
                             onClick={() => {
-                              if (file.path)
-                                setDiffTarget({
-                                  path: file.path,
-                                  content: file.content,
-                                });
+                              if (path !== null)
+                                setDiffTarget({ path, content: file.content });
                             }}
                             title={
                               isDelete

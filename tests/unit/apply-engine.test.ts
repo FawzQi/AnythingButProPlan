@@ -27,7 +27,7 @@ describe("applyFiles", () => {
     ).resolves.toBe("export const a = 1\n");
   });
 
-  it("backs up the previous version before overwriting", async () => {
+  it("overwrites a file and reports the status", async () => {
     const target = path.join(root, "app.ts");
     await fs.writeFile(target, "old\n", "utf8");
 
@@ -36,16 +36,13 @@ describe("applyFiles", () => {
       files: [{ path: "app.ts", content: "new\n" }],
     });
 
-    expect(results[0]).toEqual({
-      path: "app.ts",
-      status: "overwritten",
-      backupPath: "app.ts.bak",
-    });
+    // Version history is Git's job. The applier writes the new content and
+    // reports the status; there is no `.bak` sibling any more.
+    expect(results[0]).toEqual({ path: "app.ts", status: "overwritten" });
     await expect(fs.readFile(target, "utf8")).resolves.toBe("new\n");
-    await expect(fs.readFile(`${target}.bak`, "utf8")).resolves.toBe("old\n");
   });
 
-  it("does not clobber an existing backup", async () => {
+  it("leaves no backup sibling behind after repeated overwrites", async () => {
     const target = path.join(root, "app.ts");
     await fs.writeFile(target, "first\n", "utf8");
     await applyFiles({
@@ -57,11 +54,10 @@ describe("applyFiles", () => {
       files: [{ path: "app.ts", content: "third\n" }],
     });
 
-    await expect(fs.readFile(`${target}.bak`, "utf8")).resolves.toBe("first\n");
-    const names = await fs.readdir(root);
-    expect(names.some((name) => /^app\.ts\.bak\.\d{8}T\d{6}$/.test(name))).toBe(
-      true,
-    );
+    // Git is the version history. The applier writes the new content and
+    // nothing else — no `.bak` sibling, no dated snapshot, no `.tmp`.
+    expect(await fs.readdir(root)).toEqual(["app.ts"]);
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("third\n");
   });
 
   it("leaves no .tmp files behind", async () => {

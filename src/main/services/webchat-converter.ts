@@ -132,14 +132,14 @@ export function planConversionWrite(
   let match: string | null = null
 
   for (const file of parsed.files) {
-    const candidate = file.path === null ? null : toPosix(file.path).replace(/^\.?\//, '')
-    if (candidate === null) {
+    if (file.kind === 'unresolved') {
       refused.push({
         path: '(no path)',
         reason: 'the reply named no file — it may have answered in prose',
       })
       continue
     }
+    const candidate = toPosix(file.path).replace(/^\.?\//, '')
     if (candidate !== expectedTarget) {
       refused.push({
         path: candidate,
@@ -147,7 +147,9 @@ export function planConversionWrite(
       })
       continue
     }
-    if (file.delete === true || (file.patches !== undefined && file.patches.length > 0)) {
+    // A rewrite reply must be the whole file. A patch or delete directive
+    // is the model answering a different question than the one asked.
+    if (file.kind === 'delete' || file.kind === 'patch') {
       refused.push({
         path: candidate,
         reason: 'a rewrite reply must be a whole file, not a patch or a delete',

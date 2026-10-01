@@ -348,6 +348,54 @@ function aggregateCandidates(input: {
 }
 
 /* ------------------------------------------------------------------ *
+ * Recall — the shared front half of every pipeline
+ * ------------------------------------------------------------------ */
+
+interface Recall {
+  candidates: Candidate[]
+  gitnexusMissing: boolean
+}
+
+/**
+ * The shared front half of every suggestion pipeline: read the git history,
+ * tokenize the instruction, run the GitNexus + BM25 hybrid search, and
+ * aggregate the results into a ranked candidate list.
+ *
+ * All three pipelines — local-only, Jev, and LLM — begin with this exact
+ * sequence. Extracting it keeps each entry point focused on what makes it
+ * different (how the surviving candidates become the final answer), and
+ * means a change to the recall heuristic lands in one place rather than
+ * three.
+ */
+async function recall(request: AiSuggestRequest): Promise<Recall> {
+  const known = new Set(request.filePaths)
+
+  const { history, recentFiles } = await readGitContext(
+    request.projectRoot,
+    known,
+  )
+
+  const terms = tokenize(request.instruction)
+  if (terms.length === 0) terms.push(request.instruction)
+
+  const { gitnexusHits, bm25Hits, gitnexusMissing } = await hybridSearch(
+    request.projectRoot,
+    request.filePaths,
+    terms,
+  )
+
+  const candidates = aggregateCandidates({
+    gitnexusHits,
+    bm25Hits,
+    history,
+    recentFiles,
+    known,
+  })
+
+  return { candidates, gitnexusMissing }
+}
+
+/* ------------------------------------------------------------------ *
  * No-LLM variant — local search only
  * ------------------------------------------------------------------ */
 
@@ -374,33 +422,8 @@ export async function suggestFilesGitNexusOnly(
   providerId: AiProviderId,
 ): Promise<AiSuggestion> {
   const started = Date.now()
-  const known = new Set(request.filePaths)
 
-  // --- Context ingestion ------------------------------------------------
-  const { history, recentFiles } = await readGitContext(
-    request.projectRoot,
-    known,
-  )
-
-  // --- Local keyword extraction ----------------------------------------
-  const terms = tokenize(request.instruction)
-  if (terms.length === 0) terms.push(request.instruction)
-
-  // --- Hybrid search ---------------------------------------------------
-  const { gitnexusHits, bm25Hits, gitnexusMissing } = await hybridSearch(
-    request.projectRoot,
-    request.filePaths,
-    terms,
-  )
-
-  // --- Aggregate + rerank ---------------------------------------------
-  const candidates = aggregateCandidates({
-    gitnexusHits,
-    bm25Hits,
-    history,
-    recentFiles,
-    known,
-  })
+  const { candidates, gitnexusMissing } = await recall(request)
 
   const purposes: Record<string, string> = {}
   for (const candidate of candidates) {
@@ -470,32 +493,8 @@ export async function suggestFilesGitNexusJev(
   request: AiSuggestRequest,
 ): Promise<AiSuggestion> {
   const started = Date.now()
-  const known = new Set(request.filePaths)
 
-  // --- Context ingestion ------------------------------------------------
-  const { history, recentFiles } = await readGitContext(
-    request.projectRoot,
-    known,
-  )
-
-  // --- Local keyword extraction ----------------------------------------
-  const terms = tokenize(request.instruction)
-  if (terms.length === 0) terms.push(request.instruction)
-
-  // --- Hybrid recall ---------------------------------------------------
-  const { gitnexusHits, bm25Hits, gitnexusMissing } = await hybridSearch(
-    request.projectRoot,
-    request.filePaths,
-    terms,
-  )
-
-  const candidates = aggregateCandidates({
-    gitnexusHits,
-    bm25Hits,
-    history,
-    recentFiles,
-    known,
-  })
+  const { candidates, gitnexusMissing } = await recall(request)
 
   if (candidates.length === 0) {
     return {
@@ -643,32 +642,8 @@ export async function suggestFilesGitNexusLlm(
   providerId: AiProviderId,
 ): Promise<AiSuggestion> {
   const started = Date.now()
-  const known = new Set(request.filePaths)
 
-  // --- Context ingestion ------------------------------------------------
-  const { history, recentFiles } = await readGitContext(
-    request.projectRoot,
-    known,
-  )
-
-  // --- Local keyword extraction ----------------------------------------
-  const terms = tokenize(request.instruction)
-  if (terms.length === 0) terms.push(request.instruction)
-
-  // --- Hybrid recall ---------------------------------------------------
-  const { gitnexusHits, bm25Hits, gitnexusMissing } = await hybridSearch(
-    request.projectRoot,
-    request.filePaths,
-    terms,
-  )
-
-  const candidates = aggregateCandidates({
-    gitnexusHits,
-    bm25Hits,
-    history,
-    recentFiles,
-    known,
-  })
+  const { candidates, gitnexusMissing } = await recall(request)
 
   if (candidates.length === 0) {
     return {

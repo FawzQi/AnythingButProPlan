@@ -51,32 +51,43 @@ export interface PatchBlock {
   replace: string
 }
 
-export interface ParsedFile {
-  /** null = ambiguous, needs user input. */
-  path: string | null
-  /**
-   * Full content for a new/rewritten file; the rendered patch text (for
-   * display) when `patches` is set.
-   */
-  content: string
+/**
+ * Fields shared by every parsed-file variant. `content` is the full file
+ * body for `kind: 'full'` and `kind: 'unresolved'`, and the rendered
+ * SEARCH/REPLACE text (for display only) for `kind: 'patch'`. It is the
+ * empty string for `kind: 'delete'`.
+ */
+interface ParsedFileCommon {
+  /** Original text the AI wrote for this entry. Kept for the diff view. */
+  rawBlock: string
   language: string | null
   pathSource: PathSource
-  ambiguous: boolean
-  /** Original text for debugging. */
-  rawBlock: string
-  /**
-   * SEARCH/REPLACE pairs the AI emitted for an existing file. When present
-   * and non-empty, the applier reads the file from disk, applies each pair in
-   * order, and writes the result — `content` is ignored.
-   */
-  patches?: PatchBlock[]
-  /**
-   * When true, this entry is a delete directive (`Delete: <path>` in the
-   * response): the applier removes the file rather than writing `content` or
-   * applying `patches`.
-   */
-  delete?: boolean
+  content: string
 }
+
+/**
+ * One entry from the AI response, discriminated on how it should be applied.
+ *
+ *   - `full`       — a whole file the model emitted, with a target path.
+ *   - `unresolved` — a whole file with no usable path; the user must supply
+ *                    one before it can be applied.
+ *   - `patch`      — SEARCH/REPLACE pairs to apply against the file on disk.
+ *   - `delete`     — a `Delete: <path>` directive: remove the file.
+ *
+ * The tag replaces the previous `path: string | null`, `ambiguous: boolean`,
+ * `patches?: PatchBlock[]`, and `delete?: boolean` fields, which together
+ * admitted contradictory states (a delete with patches, an ambiguous entry
+ * with a path) that the parser maintained only by convention.
+ */
+export type ParsedFile =
+  | (ParsedFileCommon & { kind: 'full'; path: string })
+  | (ParsedFileCommon & { kind: 'unresolved'; path: null })
+  | (ParsedFileCommon & { kind: 'patch'; path: string; patches: PatchBlock[] })
+  | (ParsedFileCommon & {
+      kind: 'delete'
+      path: string
+      pathSource: 'delete-header'
+    })
 
 export type ParseStrategy =
   | 'markdown'

@@ -147,7 +147,7 @@ describe('parseResponse — strategy cascade', () => {
 
     expect(result.strategy).toBe('user-assisted')
     expect(result.files).toHaveLength(2)
-    expect(result.files.every((file) => file.path === null && file.ambiguous)).toBe(true)
+    expect(result.files.every((file) => file.kind === 'unresolved')).toBe(true)
     expect(result.files[0]?.content).toBe(
       'export const app = (): number => 42\nexport const other = (): number => 43',
     )
@@ -335,7 +335,7 @@ describe('parseResponse — deletes', () => {
       'src/old.ts',
       'src/app.ts',
     ])
-    expect(result.files[0]?.delete).toBe(true)
+    expect(result.files[0]?.kind).toBe('delete')
     expect(result.files[0]?.pathSource).toBe('delete-header')
   })
 
@@ -344,7 +344,7 @@ describe('parseResponse — deletes', () => {
 
     expect(result.strategy).toBe('delete')
     expect(result.files).toHaveLength(1)
-    expect(result.files[0]?.delete).toBe(true)
+    expect(result.files[0]?.kind).toBe('delete')
   })
 })
 
@@ -360,11 +360,75 @@ describe('parseResponse — path safety', () => {
 
     const result = parseResponse(raw)
 
-    // The path is refused, so the block survives as ambiguous rather than
-    // being written somewhere outside the project.
+    // The path is refused, so the block survives as `unresolved` rather
+    // than being written somewhere outside the project.
     expect(result.strategy).toBe('user-assisted')
     expect(result.files).toHaveLength(1)
     expect(result.files[0]?.path).toBeNull()
     expect(result.files[0]?.content).toBe('root')
+  })
+})
+
+describe('parseResponse — ParsedFile discriminant', () => {
+  // Every entry the parser emits is one of four tagged variants. Each
+  // strategy in the cascade is expected to produce a specific tag; these
+  // tests pin the tag at the boundary so a future change to the parser
+  // cannot silently produce a variant the apply engine or the UI does not
+  // understand.
+
+  it('tags a resolved File: header as kind: full', () => {
+    const raw = ['File: src/app.ts', '', '```typescript', 'export const a = 1', '```'].join('\n')
+    const result = parseResponse(raw)
+    expect(result.files[0]?.kind).toBe('full')
+  })
+
+  it('tags a block with no usable path as kind: unresolved', () => {
+    const raw = ['```typescript', 'export const a = 1', '```'].join('\n')
+    const result = parseResponse(raw)
+    expect(result.files[0]?.kind).toBe('unresolved')
+    // An unresolved entry has a `null` path by construction — the union
+    // makes that the only shape it can take.
+    expect(result.files[0]?.path).toBeNull()
+  })
+
+  it('tags a SEARCH/REPLACE entry as kind: patch and carries the pairs', () => {
+    const raw = [
+      'File: src/app.ts',
+      '',
+      '<<<<<<< SEARCH',
+      'a = 1',
+      '=======',
+      'a = 2',
+      '>>>>>>> REPLACE',
+    ].join('\n')
+    const result = parseResponse(raw)
+    expect(result.files[0]?.kind).toBe('patch')
+    const file = result.files[0]
+    if (file && file.kind === 'patch') {
+      expect(file.patches).toHaveLength(1)
+      expect(file.patches[0]).toEqual({ search: 'a = 1', replace: 'a = 2' })
+    }
+  })
+
+  it('tags a Delete: directive as kind: delete with the header source', () => {
+    const result = parseResponse('Delete: src/old.ts\n')
+    expect(result.files[0]?.kind).toBe('delete')
+    expect(result.files[0]?.pathSource).toBe('delete-header')
+  })
+
+  it('never carries patches or a delete flag on a full-content entry', () => {
+    // Before the union, `ParsedFile` allowed a full-content entry that also
+    // carried an empty `patches` array or a stray `delete: false`. The
+    // union makes those fields structurally impossible on the `full`
+    // variant; this test asserts the parser only ever emits the narrow
+    // shape.
+    const raw = ['File: src/app.ts', '', '```typescript', 'export const a = 1', '```'].join('\n')
+    const result = parseResponse(raw)
+    const file = result.files[0]
+    expect(file?.kind).toBe('full')
+    if (file && file.kind === 'full') {
+      expect('patches' in file).toBe(false)
+      expect('delete' in file).toBe(false)
+    }
   })
 })
