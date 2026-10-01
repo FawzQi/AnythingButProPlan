@@ -365,6 +365,9 @@ export function PromptDashboard(): ReactElement {
         >
           {building ? "Building…" : "Generate prompt"}
         </Button>
+        {/* Clear, Copy, and Save all use the same default variant so the row
+            reads as one group of secondary actions next to the primary
+            Generate and Send buttons. */}
         <Button
           onClick={clearPrompt}
           disabled={prompt === ""}
@@ -372,11 +375,17 @@ export function PromptDashboard(): ReactElement {
         >
           Clear
         </Button>
-        <Button onClick={() => void copyPrompt()} disabled={prompt === ""}>
-          Copy
+        <Button
+          onClick={() => void copyPrompt()}
+          disabled={prompt === ""}
+          title="Copy the prompt to the clipboard, with the input instruction inserted."
+        >
         </Button>
-        <Button onClick={() => void savePrompt()} disabled={prompt === ""}>
-          Save
+        <Button
+          onClick={() => void savePrompt()}
+          disabled={prompt === ""}
+          title="Save the prompt to a file on disk."
+        >
         </Button>
         <Button
           variant="primary"

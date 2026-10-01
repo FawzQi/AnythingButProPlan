@@ -16,6 +16,7 @@ import type {
   DocumentEntry,
   IndexBuildRequest,
   IndexBuildResult,
+  RecentFolder,
   ResearchCancelRequest,
   ResearchPromptRequest,
   ResearchPromptResult,
@@ -84,6 +85,12 @@ import {
   suggestFilesGitNexusJev,
   suggestFilesGitNexusLlm,
 } from "./services/gitnexus-selector";
+import {
+  addRecentFolder,
+  clearRecentFolders,
+  listRecentFolders,
+  removeRecentFolder,
+} from "./services/recent-folders";
 import {
   discoverModels,
   listProviders,
@@ -258,6 +265,38 @@ export function registerIpcHandlers(): void {
     IpcChannel.ScanDirectory,
     async (_event, root: unknown): Promise<ScanResult> => {
       return scanDirectory(requireString(root, "root"));
+    },
+  );
+
+  /* ---------------------------------------------------------------------- *
+   * Recent folders
+   * ---------------------------------------------------------------------- */
+
+  ipcMain.handle(
+    IpcChannel.RecentFoldersList,
+    async (): Promise<RecentFolder[]> => {
+      return listRecentFolders();
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.RecentFoldersAdd,
+    async (_event, folderPath: unknown): Promise<RecentFolder[]> => {
+      return addRecentFolder(requireString(folderPath, "path"));
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.RecentFoldersRemove,
+    async (_event, folderPath: unknown): Promise<RecentFolder[]> => {
+      return removeRecentFolder(requireString(folderPath, "path"));
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.RecentFoldersClear,
+    async (): Promise<RecentFolder[]> => {
+      return clearRecentFolders();
     },
   );
 

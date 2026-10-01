@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
 
 /**
  * Thin wrapper around the `gitnexus` CLI.
@@ -36,6 +38,8 @@ export interface GitNexusStatus {
   available: boolean
   version: string | null
   reason: string | null
+  /** The executable path that was found, when available. */
+  executablePath?: string | null
 }
 
 interface ProcessResult {
@@ -43,6 +47,8 @@ interface ProcessResult {
   stdout: string
   stderr: string
   error?: string
+  /** True when the spawn itself failed because the binary was not found. */
+  enoent?: boolean
 }
 
 function runBinary(
@@ -53,7 +59,17 @@ function runBinary(
 ): Promise<ProcessResult> {
   return new Promise((resolve) => {
     let settled = false
-    const child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(bin, args, {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      // On Windows, `.cmd` and `.bat` shims installed by npm cannot be
+      // spawned directly without `shell: true` because Node's spawn does not
+      // consult PATHEXT. This is the root cause of "gitnexus CLI not found"
+      // on Windows even though `npm install -g gitnexus` succeeded — the
+      // package installs `gitnexus.cmd` in `%APPDATA%\npm`, which is on PATH
+      // but is not directly executable via `spawn('gitnexus', ...)`.
+      shell: process.platform === 'win32',
+    })
     let stdout = ''
     let stderr = ''
     const timer = setTimeout(() => {
@@ -73,11 +89,17 @@ function runBinary(
     child.stderr?.on('data', (chunk) => {
       stderr += String(chunk)
     })
-    child.on('error', (error) => {
+    child.on('error', (error: NodeJS.ErrnoException) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      resolve({ ok: false, stdout, stderr, error: error.message })
+      resolve({
+        ok: false,
+        stdout,
+        stderr,
+        error: error.message,
+        enoent: error.code === 'ENOENT',
+      })
     })
     child.on('close', (code) => {
       if (settled) return
@@ -86,6 +108,60 @@ function runBinary(
       resolve({ ok: code === 0, stdout, stderr })
     })
   })
+}
+
+/**
+ * Windows-specific executable discovery. On Windows, a globally-installed
+ * npm package lands in one of two places depending on how Node was set up:
+ *
+ *   %APPDATA%\npm\gitnexus.cmd       (standard npm prefix on Windows)
+ *   %ProgramFiles%\nodejs\gitnexus.cmd (when npm's prefix is the Node dir)
+ *
+ * The `.cmd` file is a batch shim that forwards to `node ...\gitnexus`.
+ * `spawn` cannot execute it directly, and — critically — the `shell: true`
+ * workaround above only works if `gitnexus` is already resolvable through
+ * the shell's PATH. In practice, Electron launched from a shortcut inherits
+ * a PATH that may not include `%APPDATA%\npm`, which is why the wrapper
+ * probes these well-known locations directly and reports the executable
+ * path in the status so the UI can show it.
+ *
+ * On non-Windows platforms this returns null and the caller falls back to
+ * a bare `gitnexus` on PATH, which is the correct behaviour for a
+ * globally-installed npm package on macOS and Linux.
+ */
+async function findWindowsGitNexus(): Promise<string | null> {
+  if (process.platform !== 'win32') return null
+
+  const candidates: string[] = []
+
+  const appData = process.env.APPDATA
+  if (appData) {
+    candidates.push(path.join(appData, 'npm', 'gitnexus.cmd'))
+    candidates.push(path.join(appData, 'npm', 'gitnexus'))
+    candidates.push(path.join(appData, 'npm', 'gitnexus.ps1'))
+  }
+
+  const programFiles = process.env.ProgramFiles
+  if (programFiles) {
+    candidates.push(path.join(programFiles, 'nodejs', 'gitnexus.cmd'))
+  }
+
+  const localAppData = process.env.LOCALAPPDATA
+  if (localAppData) {
+    // nvm-windows and fnm install shims here.
+    candidates.push(path.join(localAppData, 'nvm', 'gitnexus.cmd'))
+    candidates.push(path.join(localAppData, 'fnm_multishells', 'gitnexus.cmd'))
+  }
+
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate)
+      return candidate
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return null
 }
 
 let cachedStatus: GitNexusStatus | null = null
@@ -97,21 +173,54 @@ let cachedStatus: GitNexusStatus | null = null
  */
 export async function checkGitNexus(): Promise<GitNexusStatus> {
   if (cachedStatus) return cachedStatus
-  const result = await runBinary('gitnexus', ['--version'], process.cwd(), 5000)
+
+  // On Windows, look for the npm shim in its well-known locations first.
+  // A bare `gitnexus` spawn will find it if PATH includes `%APPDATA%\npm`,
+  // but an Electron process started from a shortcut frequently has a
+  // narrower PATH than a terminal session, and the shim is a `.cmd` file
+  // that needs `shell: true` regardless. Probing the filesystem gives us a
+  // concrete path to hand to `spawn`, which works in both environments.
+  const windowsPath = await findWindowsGitNexus()
+  const command = windowsPath ?? 'gitnexus'
+
+  const result = await runBinary(command, ['--version'], process.cwd(), 5000)
   if (result.ok) {
     cachedStatus = {
       available: true,
       version: result.stdout.trim() || null,
       reason: null,
+      executablePath: windowsPath,
     }
   } else {
+    // A successful installation on Windows that the wrapper still cannot
+    // spawn produces ENOENT on the `error` event. The reason string below
+    // is what the UI shows next to "gitnexus CLI not found" — make it
+    // actionable by naming the platform-specific cause instead of echoing
+    // the bare Node error message.
+    let reason: string
+    if (result.enoent && process.platform === 'win32') {
+      reason =
+        'gitnexus was not found. `npm install -g gitnexus` should place a ' +
+        'shim at %APPDATA%\\npm\\gitnexus.cmd — check that this file exists ' +
+        'and that %APPDATA%\\npm is on PATH for the process that launched ' +
+        'the app. If you installed with a Node version manager (nvm, fnm), ' +
+        're-open the app after activating the same Node version in a ' +
+        'terminal.'
+    } else if (result.enoent) {
+      reason =
+        'gitnexus is not installed or is not on PATH. Install it with ' +
+        '`npm install -g gitnexus`.'
+    } else {
+      reason =
+        result.error ??
+        result.stderr.trim() ??
+        'gitnexus is not installed or is not on PATH.'
+    }
     cachedStatus = {
       available: false,
       version: null,
-      reason:
-        result.error ??
-        result.stderr.trim() ??
-        'gitnexus is not installed or is not on PATH.',
+      reason,
+      executablePath: null,
     }
   }
   return cachedStatus
@@ -127,8 +236,13 @@ export async function queryGitNexus(
   const status = await checkGitNexus()
   if (!status.available) return []
 
+  // Use the same resolved path the probe found. On Windows this is the
+  // concrete `gitnexus.cmd` location; on other platforms it falls back to
+  // the bare name, which is what a global npm install puts on PATH.
+  const command = status.executablePath ?? 'gitnexus'
+
   const result = await runBinary(
-    'gitnexus',
+    command,
     [
       'query',
       '--json',

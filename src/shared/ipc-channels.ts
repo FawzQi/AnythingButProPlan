@@ -45,6 +45,12 @@ export const IpcChannel = {
   // same project cannot be cancelled independently — starting the second
   // clears the flag the first would have read. See `cancellation.ts`.
   ResearchCancel: 'research:cancel',
+  // Saved-folder list. Persisted to `userData/recent-folders.json` and
+  // surfaced in the "Recent" dropdown next to every Open folder button.
+  RecentFoldersList: 'recent-folders:list',
+  RecentFoldersAdd: 'recent-folders:add',
+  RecentFoldersRemove: 'recent-folders:remove',
+  RecentFoldersClear: 'recent-folders:clear',
 } as const
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel]

@@ -5,6 +5,7 @@ import { useAppStore } from "../../stores/app-store";
 import { useElementSize } from "../../lib/hooks";
 import { flattenTree, type TreeRow } from "../../lib/tree";
 import { Button, Panel } from "../../lib/ui";
+import { RecentFoldersMenu } from "../RecentFoldersMenu";
 
 const ROW_HEIGHT = 24;
 
@@ -188,6 +189,7 @@ export function FileTree({ width }: { width: number }): ReactElement {
           >
             &gt;_
           </Button>
+          <RecentFoldersMenu />
           <Button
             variant="primary"
             className={COMPACT}

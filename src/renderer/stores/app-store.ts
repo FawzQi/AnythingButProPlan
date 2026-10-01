@@ -11,6 +11,7 @@ import type {
   GitStatus,
   ParsedFile,
   ParseResult,
+  RecentFolder,
   WebChatTargetId,
   WebChatTargetInfo,
 } from "@shared/types";
@@ -33,6 +34,14 @@ interface AppState {
   tree: FileNode | null;
   fileCount: number;
   scanning: boolean;
+
+  /**
+   * Saved folders for the "Recent" dropdown. Loaded once on mount and
+   * refreshed whenever a folder is opened, so the list is always in sync
+   * with what the main process has persisted.
+   */
+  recentFolders: RecentFolder[];
+  recentFoldersLoading: boolean;
 
   prompt: string;
   tokenCount: number;
@@ -120,6 +129,11 @@ interface AppState {
   notice: string | null;
   error: string | null;
 
+  loadRecentFolders: () => Promise<void>;
+  openProjectByPath: (path: string) => Promise<void>;
+  removeRecentFolder: (path: string) => Promise<void>;
+  clearRecentFolders: () => Promise<void>;
+
   loadAiSettings: () => Promise<void>;
   saveAiSettings: (request: AiSettingsSaveRequest) => Promise<void>;
   loadAiModels: (provider: AiProviderId) => Promise<void>;
@@ -189,6 +203,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   fileCount: 0,
   scanning: false,
 
+  recentFolders: [],
+  recentFoldersLoading: false,
+
   prompt: "",
   tokenCount: 0,
   promptFileCount: 0,
@@ -232,6 +249,82 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   notice: null,
   error: null,
+
+  loadRecentFolders: async () => {
+    set({ recentFoldersLoading: true });
+    try {
+      const folders = await window.AnythingButProPlan.recentFoldersList();
+      set({ recentFolders: folders, recentFoldersLoading: false });
+    } catch (error) {
+      // A failed load is not fatal — the dropdown just shows an empty
+      // list. Log it rather than pushing an error banner for a shortcut
+      // that the user can live without.
+      set({ recentFoldersLoading: false });
+      console.warn("Failed to load recent folders:", message(error));
+    }
+  },
+
+  openProjectByPath: async (root) => {
+    try {
+      set({ scanning: true, error: null });
+      const scan = await window.AnythingButProPlan.scanDirectory(root);
+      set({
+        projectRoot: scan.root,
+        tree: scan.tree,
+        fileCount: scan.fileCount,
+        scanning: false,
+        prompt: "",
+        tokenCount: 0,
+        promptFileCount: 0,
+        unreadable: [],
+        sensitiveFiles: [],
+        // The previously-open file belongs to the old project; drop it rather
+        // than leaving a stale path pointing into a tree that no longer exists.
+        editingPath: null,
+        editingContent: "",
+        editingOriginal: "",
+        // Reset git state — the previous project's status is meaningless
+        // here, and `undefined` puts the Source Control tab back into its
+        // loading state rather than showing the old repo's branch.
+        gitStatus: undefined,
+        gitCommitMessage: "",
+        mapTokenCount: null,
+      });
+      // Save the folder to the recent list before anything else. The
+      // main process re-sorts, so a folder reopened from the dropdown
+      // immediately moves to the top of the list.
+      try {
+        const folders = await window.AnythingButProPlan.recentFoldersAdd(
+          scan.root,
+        );
+        set({ recentFolders: folders });
+      } catch (error) {
+        console.warn("Failed to save recent folder:", message(error));
+      }
+      await get().refreshGitStatus();
+      await get().calculateMapTokens();
+    } catch (error) {
+      set({ scanning: false, error: message(error) });
+    }
+  },
+
+  removeRecentFolder: async (path) => {
+    try {
+      const folders = await window.AnythingButProPlan.recentFoldersRemove(path);
+      set({ recentFolders: folders });
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+
+  clearRecentFolders: async () => {
+    try {
+      const folders = await window.AnythingButProPlan.recentFoldersClear();
+      set({ recentFolders: folders });
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
 
   loadAiSettings: async () => {
     set({ aiSettingsLoading: true });
@@ -440,32 +533,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const root = await window.AnythingButProPlan.pickDirectory();
       if (!root) return;
-      set({ scanning: true, error: null });
-      const scan = await window.AnythingButProPlan.scanDirectory(root);
-      set({
-        projectRoot: scan.root,
-        tree: scan.tree,
-        fileCount: scan.fileCount,
-        scanning: false,
-        prompt: "",
-        tokenCount: 0,
-        promptFileCount: 0,
-        unreadable: [],
-        sensitiveFiles: [],
-        // The previously-open file belongs to the old project; drop it rather
-        // than leaving a stale path pointing into a tree that no longer exists.
-        editingPath: null,
-        editingContent: "",
-        editingOriginal: "",
-        // Reset git state — the previous project's status is meaningless
-        // here, and `undefined` puts the Source Control tab back into its
-        // loading state rather than showing the old repo's branch.
-        gitStatus: undefined,
-        gitCommitMessage: "",
-        mapTokenCount: null,
-      });
-      await get().refreshGitStatus();
-      await get().calculateMapTokens();
+      await get().openProjectByPath(root);
     } catch (error) {
       set({ scanning: false, error: message(error) });
     }

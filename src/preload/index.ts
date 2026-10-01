@@ -14,6 +14,7 @@ import type {
   IndexBuildProgress,
   IndexBuildRequest,
   IndexBuildResult,
+  RecentFolder,
   ResearchCancelRequest,
   ResearchPromptRequest,
   ResearchPromptResult,
@@ -132,6 +133,22 @@ const api = {
     ipcRenderer.invoke(IpcChannel.ResearchBuildPrompt, request),
   researchCancel: (request: ResearchCancelRequest): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.ResearchCancel, request),
+  /**
+   * Saved-folder list, persisted under `userData/recent-folders.json`. The
+   * "Recent" dropdown next to every Open folder button reads through
+   * `recentFoldersList`, and every successful folder open calls
+   * `recentFoldersAdd` so the list tracks usage without a separate save
+   * step. Removing an individual entry is `recentFoldersRemove`;
+   * `recentFoldersClear` empties the list entirely.
+   */
+  recentFoldersList: (): Promise<RecentFolder[]> =>
+    ipcRenderer.invoke(IpcChannel.RecentFoldersList),
+  recentFoldersAdd: (folderPath: string): Promise<RecentFolder[]> =>
+    ipcRenderer.invoke(IpcChannel.RecentFoldersAdd, folderPath),
+  recentFoldersRemove: (folderPath: string): Promise<RecentFolder[]> =>
+    ipcRenderer.invoke(IpcChannel.RecentFoldersRemove, folderPath),
+  recentFoldersClear: (): Promise<RecentFolder[]> =>
+    ipcRenderer.invoke(IpcChannel.RecentFoldersClear),
   /**
    * Progress subscriptions. Each returns its own unsubscribe function rather
    * than exposing `ipcRenderer.removeListener` — the renderer never sees the

@@ -9,6 +9,34 @@ const VARIANTS: Record<ButtonVariant, string> = {
   danger: 'bg-red-700 hover:bg-red-600 text-white',
 }
 
+/**
+ * Base button. The `shrink-0` and `whitespace-nowrap` are load-bearing, not
+ * cosmetic.
+ *
+ * Every action row in the app is a `flex` container with `flex-wrap`, and a
+ * flex item shrinks by default (`flex-shrink: 1`) when the row runs out of
+ * width. A button's natural width comes from its label, so on a row that is
+ * slightly too narrow the buttons compress before the row wraps — the
+ * browser shrinks each item toward its `min-content` width, which for a
+ * button with `px-3` horizontal padding is just the padding itself. The
+ * label is still in the DOM but is clipped to invisibility, so the button
+ * renders as a small empty rounded rectangle.
+ *
+ * This is font-metric-dependent, which is why it shows up on Windows and
+ * not on Linux. Segoe UI (Windows) is slightly wider than DejaVu Sans
+ * (typical Linux), so the Prompt tab's action row — `2 / 102 selected` plus
+ * four buttons — sits just over the header width on Windows and just under
+ * it on Linux. The Linux build wraps the row onto a second line and looks
+ * correct; the Windows build squeezes the buttons instead, and `Copy` and
+ * `Save` end up as the tiny blank pills in the screenshot.
+ *
+ * `shrink-0` forbids the compression, so the row must wrap instead of
+ * squeezing — which is the correct behaviour and what the wrap on the
+ * container is there for. `whitespace-nowrap` stops a two-word label from
+ * breaking across lines when the button is genuinely narrow, so a label
+ * like "Send to web chat" stays on one line rather than becoming a
+ * two-line box the same height as its neighbours.
+ */
 export function Button({
   variant = 'secondary',
   className = '',
@@ -18,7 +46,7 @@ export function Button({
     <button
       type="button"
       {...props}
-      className={`rounded px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${VARIANTS[variant]} ${className}`}
+      className={`shrink-0 whitespace-nowrap rounded px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${VARIANTS[variant]} ${className}`}
     />
   )
 }

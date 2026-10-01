@@ -5,6 +5,7 @@ import { VISION_PROVIDERS } from "@shared/vision-providers";
 import { useAppStore } from "../../stores/app-store";
 import { useResearchStore } from "../../stores/research-store";
 import { Banner, Button, Panel } from "../../lib/ui";
+import { RecentFoldersMenu } from "../RecentFoldersMenu";
 
 const COMPACT = "px-2 py-0.5 text-xs";
 
@@ -261,6 +262,7 @@ export function DocumentTree({ width }: { width: number }): ReactElement {
           >
             {scanning ? "…" : "↻"}
           </Button>
+          <RecentFoldersMenu />
           <Button
             variant="primary"
             className={COMPACT}

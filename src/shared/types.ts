@@ -32,6 +32,25 @@ export interface ScanResult {
   skippedCount: number
 }
 
+/**
+ * One entry in the saved-folder list. Saved folders appear in the "Recent"
+ * dropdown next to every Open folder button so the user can jump back into
+ * a project without going through the native picker.
+ *
+ * Entries are added automatically when a folder is opened — from the picker
+ * or from the recent menu — and pruned automatically when the path on disk
+ * no longer exists. The list is capped at a small number (see
+ * `recent-folders.ts`) so it stays a shortcut rather than a browsing UI.
+ */
+export interface RecentFolder {
+  /** Absolute path to the folder, as the native picker returned it. */
+  path: string
+  /** Display label. Defaults to the folder's basename. */
+  label: string
+  /** Unix milliseconds of the last time this folder was opened. */
+  lastOpenedAt: number
+}
+
 export type PathSource =
   | 'file-header'
   | 'first-line-comment'
