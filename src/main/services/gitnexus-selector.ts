@@ -6,14 +6,16 @@ import type {
   AiSuggestion,
   AiSuggestRequest,
 } from '@shared/types'
-import { buildCodebaseMap } from './codebase-map'
-import { getApiKey, resolveModel } from './settings'
+import { buildCodebaseMap, buildImportGraph, skeletonFor } from './codebase-map'
+import { getApiKey, getSettings, resolveModel } from './settings'
 import { checkGitNexus, queryGitNexus, type GitNexusHit } from './gitnexus'
 import {
   Bm25Index,
   tokenize,
   type SemanticHit,
+  type IndexedDoc,
 } from './semantic-index'
+import { expandQueryLocally, expandQueryWithAi } from './query-expander'
 import { resolveWithinRoot } from './fs-service'
 import { scoreCandidatesWithJev } from './jev'
 import { rankCandidatesWithLlm } from './llm-ranker'
@@ -49,8 +51,8 @@ import { rankCandidatesWithLlm } from './llm-ranker'
 
 const MAX_COMMITS = 40
 const MAX_RECENT_FILES = 60
-const CANDIDATE_LIMIT = 40
-const SHALLOW_BYTES = 4096
+const CANDIDATE_LIMIT = 60
+const SHALLOW_BYTES = 16384
 const INDEX_CONCURRENCY = 32
 
 interface CommitInfo {
@@ -146,7 +148,7 @@ async function buildShallowIndex(
   root: string,
   filePaths: string[],
 ): Promise<Bm25Index> {
-  const docs: { path: string; text: string }[] = []
+  const docs: IndexedDoc[] = []
   let cursor = 0
 
   async function worker(): Promise<void> {
@@ -156,10 +158,37 @@ async function buildShallowIndex(
       const filePath = filePaths[index]
       if (filePath === undefined) continue
       try {
-        const head = await readHead(root, filePath, SHALLOW_BYTES)
-        docs.push({ path: filePath, text: `${filePath}\n${head}` })
+        const pathTokens = tokenize(filePath)
+        const symbolTokens: string[] = []
+        let bodyPreview = ''
+
+        const skel = await skeletonFor(root, filePath)
+        if (skel) {
+          if (skel.kind === 'code') {
+            for (const sig of skel.signatures) {
+              symbolTokens.push(...tokenize(sig))
+            }
+            for (const dep of skel.deps) {
+              symbolTokens.push(...tokenize(dep))
+            }
+          } else if ('preview' in skel && skel.preview) {
+            bodyPreview = skel.preview
+          }
+        }
+
+        const head = await readHead(root, filePath, SHALLOW_BYTES).catch(() => '')
+        if (head) {
+          bodyPreview = bodyPreview ? `${bodyPreview}\n${head}` : head
+        }
+
+        docs.push({
+          path: filePath,
+          pathTokens,
+          symbolTokens,
+          bodyPreview,
+        })
       } catch {
-        docs.push({ path: filePath, text: filePath })
+        docs.push({ path: filePath, pathTokens: tokenize(filePath) })
       }
     }
   }
@@ -244,6 +273,7 @@ function aggregateCandidates(input: {
   history: CommitInfo[]
   recentFiles: string[]
   known: Set<string>
+  importGraph?: Map<string, Set<string>>
 }): Candidate[] {
   const scores = new Map<string, number>()
   const reasons = new Map<string, string[]>()
@@ -274,25 +304,7 @@ function aggregateCandidates(input: {
     bump(path, 1.5 / (rank + 5), 'recent')
   })
 
-  // Co-change signal, applied in two directions:
-  //
-  //   1. Reinforcement — a file that keeps appearing in the same commits as
-  //      other candidates is very likely part of the same change, even when
-  //      neither its name nor its contents match the query terms. It gets a
-  //      score bump.
-  //
-  //   2. Expansion — a file that repeatedly appears in the same commits as
-  //      a *top-ranked* candidate but did not match text or graph search is
-  //      pulled into the candidate set with a smaller bump. Without this
-  //      step, a relevant file whose skeleton shares no tokens with the
-  //      instruction — an `auth.ts` edit that always touches `middleware.ts`
-  //      whose path and header never mention auth and which was not recently
-  //      changed — never reaches the precision pass, and Jev can only rate
-  //      what it is shown. Expansion closes that gap.
-  //
-  // Expansion is seeded from the top-scoring candidates only, not from every
-  // hit: expanding from the BM25 long tail would drag whole commit
-  // neighborhoods into the pool on the strength of one spurious token match.
+  // Co-change and import-graph signals
   if (scores.size > 0) {
     const TOP_SEED_COUNT = 10
     const topSeeds = new Set(
@@ -301,6 +313,22 @@ function aggregateCandidates(input: {
         .slice(0, TOP_SEED_COUNT)
         .map(([path]) => path),
     )
+
+    // Import-graph 1-hop expansion and reinforcement
+    if (input.importGraph && input.importGraph.size > 0) {
+      for (const seed of topSeeds) {
+        const neighbors = input.importGraph.get(seed)
+        if (!neighbors) continue
+        for (const neighbor of neighbors) {
+          if (!input.known.has(neighbor)) continue
+          if (scores.has(neighbor)) {
+            bump(neighbor, 0.3, 'import-graph')
+          } else {
+            bump(neighbor, 0.4, 'import-graph')
+          }
+        }
+      }
+    }
 
     const inSetCoChange = new Map<string, number>()
     const outOfSetCoChange = new Map<string, number>()
@@ -358,24 +386,63 @@ interface Recall {
 
 /**
  * The shared front half of every suggestion pipeline: read the git history,
- * tokenize the instruction, run the GitNexus + BM25 hybrid search, and
- * aggregate the results into a ranked candidate list.
- *
- * All three pipelines — local-only, Jev, and LLM — begin with this exact
- * sequence. Extracting it keeps each entry point focused on what makes it
- * different (how the surviving candidates become the final answer), and
- * means a change to the recall heuristic lands in one place rather than
- * three.
+ * build the local import graph, tokenize and expand the instruction, run the
+ * GitNexus + BM25 hybrid search, and aggregate results into a ranked candidate list.
  */
-async function recall(request: AiSuggestRequest): Promise<Recall> {
+async function recall(
+  request: AiSuggestRequest,
+  providerId?: AiProviderId,
+): Promise<Recall> {
   const known = new Set(request.filePaths)
 
-  const { history, recentFiles } = await readGitContext(
-    request.projectRoot,
-    known,
-  )
+  const [gitContext, importGraph, settings] = await Promise.all([
+    readGitContext(request.projectRoot, known),
+    buildImportGraph(request.projectRoot, request.filePaths).catch(
+      () => new Map<string, Set<string>>(),
+    ),
+    getSettings(),
+  ])
+  const { history, recentFiles } = gitContext
 
-  const terms = tokenize(request.instruction)
+  // Expand query: offline fast rule-based expander
+  let expanded = expandQueryLocally(request.instruction)
+
+  // Run HyDE AI query expansion if enabled in settings, or if providerId was passed directly
+  const runHyde = settings.enableHydeQuery || Boolean(providerId)
+  const hydeProvider: AiProviderId = settings.enableHydeQuery
+    ? settings.hydeProvider
+    : (providerId ?? 'deepseek')
+
+  if (runHyde) {
+    const apiKey = await getApiKey(hydeProvider)
+    if (apiKey) {
+      try {
+        const fallbackModel = hydeProvider === 'deepseek' ? 'deepseek-flash' : ''
+        const model = settings.enableHydeQuery && settings.hydeModel
+          ? settings.hydeModel
+          : await resolveModel(hydeProvider, fallbackModel)
+
+        const aiExpanded = await expandQueryWithAi(
+          request.instruction,
+          hydeProvider,
+          model,
+          apiKey,
+        )
+        if (aiExpanded.allTerms.length > 0) {
+          const combined = new Set([...expanded.allTerms, ...aiExpanded.allTerms])
+          expanded = {
+            primaryTerms: expanded.primaryTerms,
+            expandedTerms: [...new Set([...expanded.expandedTerms, ...aiExpanded.expandedTerms])],
+            allTerms: [...combined],
+          }
+        }
+      } catch {
+        // Fall back gracefully to rule-based expansion
+      }
+    }
+  }
+
+  const terms = expanded.allTerms.length > 0 ? expanded.allTerms : tokenize(request.instruction)
   if (terms.length === 0) terms.push(request.instruction)
 
   const { gitnexusHits, bm25Hits, gitnexusMissing } = await hybridSearch(
@@ -390,6 +457,7 @@ async function recall(request: AiSuggestRequest): Promise<Recall> {
     history,
     recentFiles,
     known,
+    importGraph,
   })
 
   return { candidates, gitnexusMissing }
@@ -643,7 +711,7 @@ export async function suggestFilesGitNexusLlm(
 ): Promise<AiSuggestion> {
   const started = Date.now()
 
-  const { candidates, gitnexusMissing } = await recall(request)
+  const { candidates, gitnexusMissing } = await recall(request, providerId)
 
   if (candidates.length === 0) {
     return {

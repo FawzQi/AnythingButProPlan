@@ -189,12 +189,15 @@ describe("conversion engine guards", () => {
     // against the document. If the discriminant were ever mismatched, the
     // `if (!extraction.ok)` branch would not fire and the test would fail
     // on a missing `result.failed` entry rather than a specific message.
-    await fs.writeFile(
-      path.join(root, "docs", "paper.pdf"),
-      "%PDF-1.4\nfake body\n",
-    );
+    const prevVenv = process.env.DOCLING_VENV;
+    process.env.DOCLING_VENV = "/nonexistent/docling-env";
+    try {
+      await fs.writeFile(
+        path.join(root, "docs", "paper.pdf"),
+        "%PDF-1.4\nfake body\n",
+      );
 
-    const result = await convertDocuments({
+      const result = await convertDocuments({
       projectRoot: root,
       docPaths: [],
       mode: "text",
@@ -213,7 +216,10 @@ describe("conversion engine guards", () => {
     const entry = result.documents.find((d) => d.path === "paper.pdf");
     expect(entry?.status).toBe("failed");
     expect(entry?.convertedExists).toBe(false);
-  });
+  } finally {
+    process.env.DOCLING_VENV = prevVenv;
+  }
+});
 });
 
 describe("ensureGitignore", () => {

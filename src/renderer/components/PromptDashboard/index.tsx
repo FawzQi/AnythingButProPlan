@@ -380,12 +380,14 @@ export function PromptDashboard(): ReactElement {
           disabled={prompt === ""}
           title="Copy the prompt to the clipboard, with the input instruction inserted."
         >
+          Copy
         </Button>
         <Button
           onClick={() => void savePrompt()}
           disabled={prompt === ""}
           title="Save the prompt to a file on disk."
         >
+          Save
         </Button>
         <Button
           variant="primary"

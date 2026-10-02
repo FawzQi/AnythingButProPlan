@@ -431,6 +431,15 @@ export interface AiSettings {
   webChatTarget: WebChatTargetId
   /** Coding mode or research mode — see `AppMode`. */
   mode: AppMode
+  /**
+   * When true, applies Stage-1 HyDE AI query expansion to all file suggestion
+   * methods (including gitnexus-only and gitnexus-jev) to boost recall on vague prompts.
+   */
+  enableHydeQuery: boolean
+  /** Provider used for HyDE query expansion. Defaults to 'deepseek'. */
+  hydeProvider: AiProviderId
+  /** Model used for HyDE query expansion. Defaults to 'deepseek-flash'. */
+  hydeModel: string
 }
 
 export interface AiSettingsSaveRequest {
@@ -445,6 +454,12 @@ export interface AiSettingsSaveRequest {
   webChatTarget?: WebChatTargetId
   /** Switch between coding mode and research mode. */
   mode?: AppMode
+  /** Enable or disable HyDE AI query expansion across suggestion methods. */
+  enableHydeQuery?: boolean
+  /** Update HyDE provider. */
+  hydeProvider?: AiProviderId
+  /** Update HyDE model. */
+  hydeModel?: string
 }
 
 export interface AiSuggestRequest {

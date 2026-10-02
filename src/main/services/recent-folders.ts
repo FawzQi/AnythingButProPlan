@@ -49,7 +49,7 @@ async function readStored(): Promise<StoredShape> {
     const folders: RecentFolder[] = []
     for (const entry of parsed.folders) {
       if (entry === null || typeof entry !== 'object') continue
-      const record = entry as Record<string, unknown>
+      const record = entry as unknown as Record<string, unknown>
       const folderPath = typeof record.path === 'string' ? record.path : ''
       if (folderPath === '' || folderPath.includes('\0')) continue
       folders.push({

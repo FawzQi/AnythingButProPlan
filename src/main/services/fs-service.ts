@@ -1,7 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import ignore, { type Ignore } from "ignore";
-import sanitizeFilename from "sanitize-filename";
 import type { FileNode, ScanResult } from "@shared/types";
 
 /** Directories that are never worth prompting over. */
@@ -20,7 +19,7 @@ const ALWAYS_SKIP = new Set([
   ".cache",
 ]);
 
-const BINARY_EXTENSIONS = new Set([
+export const BINARY_EXTENSIONS = new Set([
   ".png",
   ".jpg",
   ".jpeg",
@@ -82,6 +81,7 @@ const BINARY_EXTENSIONS = new Set([
   ".sketch",
   ".blend",
   ".lockb",
+  ".webm",
 ]);
 
 /**
@@ -142,10 +142,13 @@ export function resolveWithinRoot(root: string, relativePath: string): string {
 
   // Reject rather than rewrite: a silently renamed AI path would write the
   // file somewhere the model did not ask for. This catches the names Linux
-  // accepts but Windows cannot create (CON, NUL, trailing dots, `:`).
+  // accepts but Windows cannot create (CON, NUL, trailing dots/spaces, `:`).
+  // eslint-disable-next-line no-control-regex
+  const INVALID_FILENAME =
+    /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$|[<>:"/\\|?*\x00-\x1f\x7f]|[\s.]$/i;
   for (const segment of relativePath.split("/")) {
     if (segment === "") continue;
-    if (sanitizeFilename(segment) !== segment) {
+    if (INVALID_FILENAME.test(segment)) {
       throw new Error(`Path is not portable across platforms: ${relativePath}`);
     }
   }

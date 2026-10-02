@@ -15,19 +15,31 @@
  * body, so indexing a large repository stays fast.
  */
 
+import { splitCompound, stemToken } from './query-expander'
+
 export interface SemanticDoc {
   path: string
-  text: string
+  text?: string
+  /** Optional tokens extracted from file path and directory names (weighted higher). */
+  pathTokens?: string[]
+  /** Optional tokens extracted from exported symbols/declarations (weighted higher). */
+  symbolTokens?: string[]
+  /** Optional body preview text. */
+  bodyPreview?: string
 }
+
+export type IndexedDoc = SemanticDoc
 
 export interface SemanticHit {
   path: string
   score: number
 }
 
-interface IndexedDoc {
+interface StoredDoc {
   path: string
   tokens: string[]
+  stemMap: Map<string, number>
+  tokenCounts: Map<string, number>
   length: number
 }
 
@@ -35,37 +47,67 @@ const K1 = 1.5
 const B = 0.75
 
 /**
- * Split text into lowercase tokens. camelCase and PascalCase are split at
- * their case boundary first so `parseSuggestedFiles` contributes `parse`,
- * `suggested`, and `files` separately, and a query for `suggested files`
- * matches it.
+ * Split text into lowercase tokens. camelCase, PascalCase, snake_case,
+ * and compound words are split so `parseSuggestedFiles` contributes `parse`,
+ * `suggested`, and `files` separately, and a query for `suggested files` matches it.
  */
 export function tokenize(text: string): string[] {
-  const out: string[] = []
-  const normalised = text.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase()
-  for (const piece of normalised.split(/[^a-z0-9_]+/)) {
-    if (piece.length >= 2 && piece.length <= 40) out.push(piece)
-  }
-  return out
+  return splitCompound(text)
 }
 
 export class Bm25Index {
-  private readonly docs: IndexedDoc[]
+  private readonly docs: StoredDoc[]
   private readonly documentFrequency: Map<string, number>
+  private readonly stemFrequency: Map<string, number>
   private readonly averageLength: number
 
   constructor(docs: SemanticDoc[]) {
     this.docs = docs.map((doc) => {
-      const tokens = tokenize(doc.text)
-      return { path: doc.path, tokens, length: tokens.length }
+      const contentTokens = tokenize(`${doc.text ?? ''}\n${doc.bodyPreview ?? ''}`)
+      const pathTokens = doc.pathTokens ?? tokenize(doc.path)
+      const symbolTokens = doc.symbolTokens ?? []
+
+      // Multi-channel weighted token counts:
+      // Path tokens carry 3x weight, symbols 2x, body text 1x.
+      const tokenCounts = new Map<string, number>()
+      const stemMap = new Map<string, number>()
+
+      const recordTokens = (tokens: string[], weight: number): void => {
+        for (const token of tokens) {
+          tokenCounts.set(token, (tokenCounts.get(token) ?? 0) + weight)
+          const stem = stemToken(token)
+          stemMap.set(stem, (stemMap.get(stem) ?? 0) + weight)
+        }
+      }
+
+      recordTokens(contentTokens, 1.0)
+      recordTokens(pathTokens, 3.0)
+      recordTokens(symbolTokens, 2.0)
+
+      const allTokens = [...new Set([...contentTokens, ...pathTokens, ...symbolTokens])]
+      return {
+        path: doc.path,
+        tokens: allTokens,
+        tokenCounts,
+        stemMap,
+        length: contentTokens.length + pathTokens.length * 2,
+      }
     })
 
     this.documentFrequency = new Map()
+    this.stemFrequency = new Map()
+
     for (const doc of this.docs) {
-      for (const token of new Set(doc.tokens)) {
+      for (const token of doc.tokens) {
         this.documentFrequency.set(
           token,
           (this.documentFrequency.get(token) ?? 0) + 1,
+        )
+      }
+      for (const stem of doc.stemMap.keys()) {
+        this.stemFrequency.set(
+          stem,
+          (this.stemFrequency.get(stem) ?? 0) + 1,
         )
       }
     }
@@ -74,7 +116,7 @@ export class Bm25Index {
     this.averageLength = this.docs.length > 0 ? total / this.docs.length : 0
   }
 
-  search(query: string, limit = 40): SemanticHit[] {
+  search(query: string, limit = 60): SemanticHit[] {
     const terms = tokenize(query)
     if (terms.length === 0 || this.docs.length === 0) return []
 
@@ -82,16 +124,25 @@ export class Bm25Index {
     const scored = this.docs.map((doc) => {
       let score = 0
       for (const term of terms) {
-        const df = this.documentFrequency.get(term) ?? 0
-        if (df === 0) continue
+        const exactTf = doc.tokenCounts.get(term) ?? 0
+        let termFrequency = exactTf
+
+        // If exact term wasn't found, check stem match with 0.8x weight
+        if (termFrequency === 0) {
+          const stem = stemToken(term)
+          const stemTf = doc.stemMap.get(stem) ?? 0
+          if (stemTf > 0) termFrequency = stemTf * 0.8
+        }
+        if (termFrequency === 0) continue
+
+        const df =
+          this.documentFrequency.get(term) ??
+          this.stemFrequency.get(stemToken(term)) ??
+          1
 
         const idf = Math.log(
           1 + (documentCount - df + 0.5) / (df + 0.5),
         )
-
-        let termFrequency = 0
-        for (const token of doc.tokens) if (token === term) termFrequency += 1
-        if (termFrequency === 0) continue
 
         const denominator =
           termFrequency +

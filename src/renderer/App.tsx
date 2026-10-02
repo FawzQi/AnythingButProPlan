@@ -61,6 +61,15 @@ function WebChatIndicator({
         aria-hidden="true"
         title={`${targetLabel}: ${stateLabel}`}
       />
+      {status !== "idle" && (
+        <span
+          className={`text-[11px] font-medium ${
+            status === "paused" ? "text-amber-400" : "text-sky-400"
+          }`}
+        >
+          {status === "paused" ? "paused" : "working…"}
+        </span>
+      )}
       <button
         type="button"
         onClick={onOpen}

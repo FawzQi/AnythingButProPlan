@@ -32,6 +32,9 @@ interface StoredShape {
   webChatTarget: WebChatTargetId
   /** Coding mode or research mode. Defaults to `coding`. */
   mode: AppMode
+  enableHydeQuery?: boolean
+  hydeProvider?: AiProviderId
+  hydeModel?: string
 }
 
 const EMPTY: StoredShape = {
@@ -41,6 +44,9 @@ const EMPTY: StoredShape = {
   suggestMethod: 'gitnexus-only',
   webChatTarget: 'deepseek',
   mode: 'coding',
+  enableHydeQuery: false,
+  hydeProvider: 'deepseek',
+  hydeModel: 'deepseek-flash',
 }
 
 function asAppMode(value: unknown): AppMode {
@@ -94,6 +100,9 @@ async function readStored(): Promise<StoredShape> {
       // coding mode — the half of the app that carries the filesystem
       // actions — instead of an unrecognised state.
       mode: asAppMode(parsed.mode),
+      enableHydeQuery: Boolean(parsed.enableHydeQuery),
+      hydeProvider: parsed.hydeProvider ?? 'deepseek',
+      hydeModel: parsed.hydeModel ?? 'deepseek-flash',
     }
   } catch {
     return { ...EMPTY }
@@ -142,6 +151,9 @@ export async function getSettings(): Promise<AiSettings> {
     suggestMethod: stored.suggestMethod,
     webChatTarget: stored.webChatTarget,
     mode: stored.mode,
+    enableHydeQuery: stored.enableHydeQuery ?? false,
+    hydeProvider: stored.hydeProvider ?? 'deepseek',
+    hydeModel: stored.hydeModel ?? 'deepseek-flash',
   }
 }
 
@@ -160,6 +172,15 @@ export async function saveSettings(
   }
   if (request.mode !== undefined) {
     stored.mode = request.mode
+  }
+  if (request.enableHydeQuery !== undefined) {
+    stored.enableHydeQuery = request.enableHydeQuery
+  }
+  if (request.hydeProvider !== undefined) {
+    stored.hydeProvider = request.hydeProvider
+  }
+  if (request.hydeModel !== undefined) {
+    stored.hydeModel = request.hydeModel
   }
   if (request.model) {
     stored.modelByProvider = {

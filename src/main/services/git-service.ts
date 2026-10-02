@@ -8,25 +8,7 @@ import type {
   GitFileStatusCode,
   GitStatus,
 } from '@shared/types'
-
-/**
- * Thin wrapper over the `git` CLI. Every call shells out to the user's
- * installed Git rather than linking a library — that keeps the app working
- * with whatever Git version the user has, avoids shipping a native
- * dependency, and means `git` is the single source of truth for behavior.
- *
- * The service is deliberately passive: it exposes exactly the operations a
- * VSCode-style source control panel needs (status, init, stage, unstage,
- * discard, commit, per-file diff) and nothing else. It never commits on
- * behalf of the app; every commit comes from an explicit user action in
- * the UI.
- */
-
-interface ProcessResult {
-  ok: boolean
-  stdout: string
-  stderr: string
-}
+import type { ProcessResult } from './gitnexus'
 
 /**
  * Run `git <args>` with `cwd` set to the project root. `stdio: ignore` for

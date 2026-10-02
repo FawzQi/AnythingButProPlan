@@ -356,6 +356,9 @@ export function registerIpcHandlers(): void {
         suggestMethod: typed?.suggestMethod,
         webChatTarget: typed?.webChatTarget,
         mode: typed?.mode,
+        enableHydeQuery: typed?.enableHydeQuery,
+        hydeProvider: typed?.hydeProvider,
+        hydeModel: typed?.hydeModel,
       });
     },
   );

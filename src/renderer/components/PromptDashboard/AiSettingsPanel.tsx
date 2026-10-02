@@ -232,6 +232,100 @@ export function AiSettingsPanel(): ReactElement {
             </span>
           </label>
         </div>
+
+        <div className="mt-3 max-w-2xl rounded border border-[#2c3038] bg-[#12141a]/60 p-3">
+          <label className="flex cursor-pointer items-start gap-2 text-xs">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-4 shrink-0 rounded border-[#2c3038] accent-sky-500"
+              checked={settings.enableHydeQuery ?? false}
+              onChange={(e) => void save({ enableHydeQuery: e.target.checked })}
+            />
+            <div className="flex-1">
+              <span className="block font-medium text-slate-200">
+                Enable HyDE AI query expansion for all suggestion methods
+              </span>
+              <span className="block text-[11px] text-slate-500">
+                Uses a fast Stage-1 AI prompt (HyDE) during the recall stage to generate technical code identifiers and file keywords from vague or symptom-based instructions. Enables high recall even when using <strong>GitNexus only</strong> or <strong>GitNexus + Jev</strong>.
+              </span>
+            </div>
+          </label>
+
+          {settings.enableHydeQuery ? (
+            <div className="mt-3 border-t border-[#2c3038] pt-3 pl-6">
+              <div className="flex flex-col gap-2">
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-slate-400">
+                    HyDE Provider (Default: DeepSeek)
+                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {providers
+                      .filter((p) => p.id !== "typesafe")
+                      .map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() =>
+                            void save({
+                              hydeProvider: p.id,
+                              hydeModel: p.models[0] ?? "",
+                            })
+                          }
+                          className={`rounded border px-2 py-1 text-[11px] font-medium transition ${
+                            (settings.hydeProvider ?? "deepseek") === p.id
+                              ? "border-sky-500 bg-sky-950/40 text-sky-100"
+                              : "border-[#2c3038] text-slate-400 hover:border-slate-500"
+                          }`}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                  </div>
+                </div>
+
+                {(() => {
+                  const hydeProvId = settings.hydeProvider ?? "deepseek";
+                  const hydeP = providers.find((p) => p.id === hydeProvId);
+                  const hydeHasKey = settings.hasApiKey[hydeProvId] === true;
+                  const hydeModel =
+                    settings.hydeModel ?? hydeP?.models[0] ?? "deepseek-flash";
+                  return (
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-slate-400">
+                        HyDE Model (Default: deepseek-flash)
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {hydeP?.models.map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => void save({ hydeModel: m })}
+                            className={`rounded border px-2 py-0.5 font-mono text-[10px] transition ${
+                              hydeModel === m
+                                ? "border-sky-500 bg-sky-950/40 text-sky-100"
+                                : "border-[#2c3038] text-slate-400 hover:border-slate-500"
+                            }`}
+                          >
+                            {m}
+                          </button>
+                        ))}
+                      </div>
+                      {!hydeHasKey ? (
+                        <p className="mt-1.5 text-[11px] text-amber-400">
+                          ⚠ No API key saved for {hydeP?.label ?? hydeProvId}. Paste and save a key below for HyDE expansion to run.
+                        </p>
+                      ) : (
+                        <p className="mt-1 text-[10px] text-emerald-400">
+                          ✓ Key saved for {hydeP?.label ?? hydeProvId}.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div className="mb-4">

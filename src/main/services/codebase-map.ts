@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { readTextFile } from './fs-service'
+import { BINARY_EXTENSIONS, readTextFile } from './fs-service'
 
 /**
  * Build a token-efficient skeleton of the codebase for the file-selection
@@ -34,17 +34,6 @@ const CONFIG_EXTENSIONS = new Set([
 
 const DOC_EXTENSIONS = new Set(['.md', '.markdown', '.rst', '.txt', '.adoc'])
 
-const ASSET_EXTENSIONS = new Set([
-  '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.avif', '.tiff', '.svg', '.svgz',
-  '.mp3', '.mp4', '.mov', '.avi', '.mkv', '.wav', '.flac', '.ogg', '.webm',
-  '.zip', '.tar', '.gz', '.bz2', '.xz', '.7z', '.rar',
-  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
-  '.exe', '.dll', '.so', '.dylib', '.o', '.a', '.lib', '.class', '.pyc',
-  '.wasm', '.bin', '.db', '.sqlite', '.sqlite3',
-  '.woff', '.woff2', '.ttf', '.otf', '.eot',
-  '.psd', '.ai', '.sketch', '.blend', '.lockb',
-])
-
 /**
  * Lock files and generated artefacts that would drown out real code in the
  * map. Not exhaustive — the point is to keep the common offenders out.
@@ -68,7 +57,7 @@ export function classifyFile(filePath: string): FileKind {
   if (GENERATED_BASENAMES.has(name.toLowerCase())) return 'data'
   if (MINIFIED.test(name)) return 'asset'
   const ext = path.extname(filePath).toLowerCase()
-  if (ASSET_EXTENSIONS.has(ext)) return 'asset'
+  if (BINARY_EXTENSIONS.has(ext) || ext === '.svg') return 'asset'
   if (CODE_EXTENSIONS.has(ext)) return 'code'
   if (CONFIG_EXTENSIONS.has(ext)) return 'config'
   if (DOC_EXTENSIONS.has(ext)) return 'doc'
@@ -145,7 +134,7 @@ function languageFor(filePath: string): LanguageFamily {
  * (`lines?`, `deps?`, `signatures?`, `preview?`), which permitted
  * contradictory states such as a `code` entry with only a `preview`.
  */
-type FileSkeleton =
+export type FileSkeleton =
   | { kind: 'asset'; path: string }
   | {
       kind: 'code'
@@ -289,7 +278,7 @@ function extractCode(
   }
 }
 
-async function skeletonFor(
+export async function skeletonFor(
   root: string,
   filePath: string,
 ): Promise<FileSkeleton | null> {
@@ -383,4 +372,63 @@ export async function buildCodebaseMap(
     text: skels.map(formatSkeleton).join('\n\n'),
     fileCount: skels.length,
   }
+}
+
+/**
+ * Build a bidirectional adjacency map of local file imports.
+ * Given a list of relative repo file paths, resolves relative imports
+ * (e.g. `./codebase-map`, `../types`) to other files in the repo.
+ */
+export async function buildImportGraph(
+  root: string,
+  filePaths: string[],
+): Promise<Map<string, Set<string>>> {
+  const fileSet = new Set(filePaths)
+  const graph = new Map<string, Set<string>>()
+  const extensions = ['', '.ts', '.tsx', '.js', '.jsx', '.json', '/index.ts', '/index.tsx', '/index.js']
+
+  function addEdge(a: string, b: string) {
+    let sA = graph.get(a)
+    if (!sA) {
+      sA = new Set()
+      graph.set(a, sA)
+    }
+    sA.add(b)
+
+    let sB = graph.get(b)
+    if (!sB) {
+      sB = new Set()
+      graph.set(b, sB)
+    }
+    sB.add(a)
+  }
+
+  const CONCURRENCY = 32
+  let index = 0
+  async function worker(): Promise<void> {
+    while (true) {
+      const i = index++
+      if (i >= filePaths.length) return
+      const filePath = filePaths[i]
+      if (!filePath) continue
+      const skel = await skeletonFor(root, filePath)
+      if (!skel || skel.kind !== 'code' || !skel.deps) continue
+
+      const dir = path.posix.dirname(filePath)
+      for (const dep of skel.deps) {
+        if (!dep.startsWith('.')) continue
+        const resolved = path.posix.normalize(path.posix.join(dir, dep))
+        for (const ext of extensions) {
+          const candidate = resolved + ext
+          if (fileSet.has(candidate)) {
+            addEdge(filePath, candidate)
+            break
+          }
+        }
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, filePaths.length) }, worker))
+  return graph
 }

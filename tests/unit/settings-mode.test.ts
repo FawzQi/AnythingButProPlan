@@ -83,4 +83,22 @@ describe("mode persistence", () => {
     await saveSettings({ webChatTarget: "gemini" });
     expect((await getSettings()).mode).toBe("research");
   });
+
+  it("defaults HyDE settings correctly and round-trips them", async () => {
+    const initial = await getSettings();
+    expect(initial.enableHydeQuery).toBe(false);
+    expect(initial.hydeProvider).toBe("deepseek");
+    expect(initial.hydeModel).toBe("deepseek-flash");
+
+    await saveSettings({
+      enableHydeQuery: true,
+      hydeProvider: "groq",
+      hydeModel: "llama-3.3-70b-versatile",
+    });
+
+    const updated = await getSettings();
+    expect(updated.enableHydeQuery).toBe(true);
+    expect(updated.hydeProvider).toBe("groq");
+    expect(updated.hydeModel).toBe("llama-3.3-70b-versatile");
+  });
 });

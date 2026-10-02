@@ -117,20 +117,22 @@ function isGoogleAuthHost(url: string): boolean {
  * with Google" button — so no per-window registration is needed in
  * `ensureWindow`.
  */
-app.on("web-contents-created", (_event, contents: WebContents) => {
-  contents.on(
-    "did-start-navigation",
-    (_navEvent, url, isInPlace, isMainFrame) => {
-      // In-page navigations (hash changes, `history.pushState`) do not
-      // issue a new document request, so the UA does not need flipping for
-      // them and flipping it would churn the WebContents for nothing.
-      if (!isMainFrame || isInPlace) return;
-      contents.setUserAgent(
-        isGoogleAuthHost(url) ? GOOGLE_AUTH_FIREFOX_UA : plainChromeUserAgent(),
-      );
-    },
-  );
-});
+if (typeof app?.on === "function") {
+  app.on("web-contents-created", (_event, contents: WebContents) => {
+    contents.on(
+      "did-start-navigation",
+      (_navEvent, url, isInPlace, isMainFrame) => {
+        // In-page navigations (hash changes, `history.pushState`) do not
+        // issue a new document request, so the UA does not need flipping for
+        // them and flipping it would churn the WebContents for nothing.
+        if (!isMainFrame || isInPlace) return;
+        contents.setUserAgent(
+          isGoogleAuthHost(url) ? GOOGLE_AUTH_FIREFOX_UA : plainChromeUserAgent(),
+        );
+      },
+    );
+  });
+}
 
 /** Time allowed for an upload to land before the prompt is sent. */
 const UPLOAD_GRACE_MS = 10_000;
@@ -390,6 +392,143 @@ function setStatus(target: WebChatTargetId, status: WebChatStatus): void {
 
 const windows = new Map<WebChatTargetId, BrowserWindow>();
 
+const STATUS_POLL_INTERVAL_MS = 1500;
+
+/**
+ * In-page inspection script executed periodically in each open web chat window.
+ * Detects whether the chat model is:
+ *   - 'paused': a "Continue" / "Resume" / "继续" button is visible (e.g. DeepSeek reached token/thinking limit)
+ *   - 'working': a "Stop" button, busy spinner, thinking block, or streaming text change is active
+ *   - 'idle': none of the above
+ */
+const STATUS_INSPECTION_SCRIPT = `(() => {
+  if (window.__AnythingButProPlanWebChatStatus === 'paused') return 'paused';
+
+  const isVisible = (el) => {
+    if (!el) return false;
+    return !!(el.offsetWidth || el.offsetHeight || (el.getClientRects && el.getClientRects().length > 0));
+  };
+
+  // 1. Detect PAUSED state (Continue / Resume / 继续)
+  const allClickables = document.querySelectorAll('button, [role="button"], a');
+  for (const b of allClickables) {
+    if (!isVisible(b)) continue;
+    const text = (b.textContent || '').trim();
+    const label = (b.getAttribute('aria-label') || '').trim();
+    const title = (b.getAttribute('title') || '').trim();
+    const combined = (label + ' ' + title + ' ' + text).toLowerCase();
+
+    // Exclude login/OAuth and terms buttons
+    const isExcluded = /\\bcontinue\\s+(with|to)\\b/i.test(combined) ||
+      /\\b(terms|privacy|policy|google|apple|github|account|login|sign\\s*in)\\b/i.test(combined);
+
+    if (!isExcluded) {
+      if (
+        /^(continue|resume|keep going|继续)$/i.test(text) ||
+        /^(continue|resume|keep going|继续)$/i.test(label) ||
+        /\\b(continue generating|continue thinking|resume generating|继续生成|继续思考)\\b/i.test(combined) ||
+        (/\\b(continue|resume)\\b/i.test(combined) && combined.length < 35) ||
+        /^(继续|继续生成|继续思考)$/.test(text)
+      ) {
+        return 'paused';
+      }
+    }
+  }
+
+  // 2. Detect WORKING state (Stop button, reasoning/thinking indicator, or active stream)
+  for (const b of allClickables) {
+    if (!isVisible(b)) continue;
+    const label = ((b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '') + ' ' + (b.textContent || '')).toLowerCase();
+    if (/\\b(stop|stop generating|停止|停止生成)\\b/i.test(label)) {
+      return 'working';
+    }
+    // DeepSeek stop button: contains square rect or has stop in class/title
+    if (b.querySelector('rect') || (b.classList.contains('ds-icon-button') && label.includes('stop'))) {
+      return 'working';
+    }
+  }
+
+  const stopSels = [
+    'div[role="button"][aria-label*="Stop" i]',
+    'button[aria-label*="Stop" i]',
+    'div[role="button"][title*="Stop" i]',
+    'button[title*="Stop" i]',
+    '[aria-label*="停止" i]',
+    '[title*="停止" i]',
+  ];
+  for (const s of stopSels) {
+    try {
+      const el = document.querySelector(s);
+      if (isVisible(el)) return 'working';
+    } catch {}
+  }
+
+  const busyEls = document.querySelectorAll(
+    '.ds-loading, [class*="thinking" i], [class*="reasoning" i], [class*="loading" i], [class*="spinner" i], [class*="streaming" i], [aria-busy="true"]'
+  );
+  for (const el of busyEls) {
+    if (isVisible(el)) return 'working';
+  }
+
+  // Check if response text is actively changing (streaming tokens)
+  const respEls = document.querySelectorAll(
+    '.ds-markdown, div[class*="markdown" i], div[class*="message-content" i]'
+  );
+  let currentLen = 0;
+  if (respEls.length > 0) {
+    const lastEl = respEls[respEls.length - 1];
+    currentLen = (lastEl.textContent || '').length;
+  }
+  const now = Date.now();
+  const prevLen = window.__AnythingButProPlanPrevLen ?? 0;
+  const prevTime = window.__AnythingButProPlanPrevTime ?? 0;
+  window.__AnythingButProPlanPrevLen = currentLen;
+  window.__AnythingButProPlanPrevTime = now;
+
+  if (prevTime > 0 && (now - prevTime) < 3500 && currentLen !== prevLen && currentLen > 0) {
+    return 'working';
+  }
+
+  if (window.__AnythingButProPlanWebChatStatus === 'working') {
+    return 'working';
+  }
+
+  return 'idle';
+})()`;
+
+async function pollOpenWindowsStatus(): Promise<void> {
+  if (windows.size === 0) return;
+  for (const [targetId, win] of windows) {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) {
+      windows.delete(targetId);
+      setStatus(targetId, "idle");
+      continue;
+    }
+    if (win.webContents.isLoading()) continue;
+    try {
+      const status = (await win.webContents.executeJavaScript(
+        STATUS_INSPECTION_SCRIPT,
+        true,
+      )) as WebChatStatus;
+      if (status === "paused" || status === "working" || status === "idle") {
+        setStatus(targetId, status);
+      }
+    } catch {
+      // Window navigating or busy; ignore
+    }
+  }
+}
+
+let liveStatusTimer: NodeJS.Timeout | null = null;
+
+function ensureStatusPoller(): void {
+  if (liveStatusTimer !== null) return;
+  liveStatusTimer = setInterval(() => {
+    void pollOpenWindowsStatus();
+  }, STATUS_POLL_INTERVAL_MS);
+  liveStatusTimer.unref?.();
+}
+
 /**
  * Build a Chrome user-agent string for the platform this process is running
  * on, using the Chromium version Electron was built against. The Chromium
@@ -526,9 +665,17 @@ async function ensureWindow(target: WebChatTarget): Promise<BrowserWindow> {
     },
   }));
 
-  win.on("closed", () => windows.delete(target.id));
+  win.on("closed", () => {
+    windows.delete(target.id);
+    setStatus(target.id, "idle");
+  });
   windows.set(target.id, win);
+  ensureStatusPoller();
+  win.webContents.on("did-finish-load", () => {
+    void pollOpenWindowsStatus();
+  });
   await win.loadURL(target.url);
+  void pollOpenWindowsStatus();
   return win;
 }
 
@@ -987,8 +1134,8 @@ async function readReplyViaCopy(
     const clicked = await clickCopyCandidate(win, i);
     if (!clicked) continue;
     await new Promise((resolve) => setTimeout(resolve, CLIPBOARD_SETTLE_MS));
-    const text = clipboard.readText();
-    if (typeof text !== "string" || text.length === 0) continue;
+    const text = await clipboard.readText();
+    if (!text) continue;
     if (text === sentinel) continue;
     if (text.length > best.length) best = text;
     // Early accept only on a result that already looks like the whole
@@ -1339,6 +1486,7 @@ export async function openWebChat(targetId: WebChatTargetId): Promise<void> {
   const win = await ensureWindow(target);
   win.show();
   win.focus();
+  void pollOpenWindowsStatus();
 }
 
 /**
@@ -1372,8 +1520,15 @@ export function cancelWebChat(): void {
  * destroyed reference.
  */
 export function closeAllWebChatWindows(): void {
+  if (liveStatusTimer !== null) {
+    clearInterval(liveStatusTimer);
+    liveStatusTimer = null;
+  }
   for (const win of windows.values()) {
     if (!win.isDestroyed()) win.destroy();
   }
   windows.clear();
+  for (const target of WEB_CHAT_TARGETS) {
+    setStatus(target.id, "idle");
+  }
 }

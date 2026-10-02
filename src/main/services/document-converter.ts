@@ -70,7 +70,9 @@ const PYTHON_TIMEOUT_MS = 3 * 60_000
  * was pointed at is the venv that actually ran. Overridable so a machine
  * where the venv lives elsewhere does not need a code change.
  */
-const DOCLING_VENV = process.env.DOCLING_VENV ?? '/data/docling-env'
+function getDoclingVenv(): string {
+  return process.env.DOCLING_VENV ?? '/data/docling-env'
+}
 
 /**
  * Device Docling runs the layout model on. CUDA by default — the model is
@@ -341,13 +343,14 @@ async function extractWithDocling(
       reason: `Docling wrapper script is missing at ${script}. Reinstall the app, or switch the extractor to the fast engine.`,
     }
   }
-  const venvPython = path.join(DOCLING_VENV, 'bin', 'python3')
+  const venv = getDoclingVenv()
+  const venvPython = path.join(venv, 'bin', 'python3')
   if (!(await exists(venvPython))) {
     return {
       ok: false,
       reason:
-        `Docling's virtualenv was not found at ${DOCLING_VENV}. Create it ` +
-        `(\`python3 -m venv ${DOCLING_VENV} && ${DOCLING_VENV}/bin/pip install docling\`), ` +
+        `Docling's virtualenv was not found at ${venv}. Create it ` +
+        `(\`python3 -m venv ${venv} && ${venv}/bin/pip install docling\`), ` +
         `set DOCLING_VENV to its root, or switch the extractor to the fast engine.`,
     }
   }

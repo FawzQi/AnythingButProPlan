@@ -236,13 +236,17 @@ describe('parseResponse — patch dialect', () => {
 
     expect(result.strategy).toBe('patch')
     expect(result.files).toHaveLength(1)
-    expect(result.files[0]?.path).toBe('src/app.ts')
-    expect(result.files[0]?.patches).toEqual([
-      {
-        search: 'export const app = (): number => 41',
-        replace: 'export const app = (): number => 42',
-      },
-    ])
+    const file = result.files[0]
+    expect(file?.path).toBe('src/app.ts')
+    expect(file?.kind).toBe('patch')
+    if (file?.kind === 'patch') {
+      expect(file.patches).toEqual([
+        {
+          search: 'export const app = (): number => 41',
+          replace: 'export const app = (): number => 42',
+        },
+      ])
+    }
   })
 
   it('mixes full-content and patch sections in one response', () => {
@@ -285,9 +289,15 @@ describe('parseResponse — patch dialect', () => {
 
     const [newFile, appEdit, helperEdit] = result.files
     expect(newFile?.content).toBe('export const created = true')
-    expect(newFile?.patches).toBeUndefined()
-    expect(appEdit?.patches).toHaveLength(1)
-    expect(helperEdit?.patches).toHaveLength(1)
+    expect(newFile?.kind).toBe('full')
+    expect(appEdit?.kind).toBe('patch')
+    expect(helperEdit?.kind).toBe('patch')
+    if (appEdit?.kind === 'patch') {
+      expect(appEdit.patches).toHaveLength(1)
+    }
+    if (helperEdit?.kind === 'patch') {
+      expect(helperEdit.patches).toHaveLength(1)
+    }
   })
 
   it('ignores a fenced block that lives inside a patch section', () => {
@@ -312,8 +322,12 @@ describe('parseResponse — patch dialect', () => {
 
     expect(result.strategy).toBe('patch')
     expect(result.files).toHaveLength(1)
-    expect(result.files[0]?.path).toBe('docs/README.md')
-    expect(result.files[0]?.patches?.[0]?.replace).toContain('npm install')
+    const file = result.files[0]
+    expect(file?.path).toBe('docs/README.md')
+    expect(file?.kind).toBe('patch')
+    if (file?.kind === 'patch') {
+      expect(file.patches[0]?.replace).toContain('npm install')
+    }
   })
 })
 

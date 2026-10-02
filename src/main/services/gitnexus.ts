@@ -42,7 +42,7 @@ export interface GitNexusStatus {
   executablePath?: string | null
 }
 
-interface ProcessResult {
+export interface ProcessResult {
   ok: boolean
   stdout: string
   stderr: string
