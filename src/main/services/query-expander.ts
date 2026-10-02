@@ -31,7 +31,7 @@ const STOPWORDS = new Set([
  * Curated developer vocabulary mapping: bridges natural language symptom words
  * to technical implementation identifiers frequently used in codebases.
  */
-const DOMAIN_SYNONYMS: Record<string, string[]> = {
+const DOMAIN_SYNONYMS: Record<string, string[]> = Object.assign(Object.create(null), {
   // Authentication & Session
   login: ['auth', 'signin', 'session', 'token', 'credential'],
   logout: ['signout', 'session', 'auth'],
@@ -83,7 +83,7 @@ const DOMAIN_SYNONYMS: Record<string, string[]> = {
   error: ['fail', 'failure', 'exception', 'catch', 'reject', 'warn'],
   bug: ['issue', 'fix', 'error', 'defect', 'problem'],
   upload: ['import', 'scanner', 'attach', 'file', 'converter'],
-}
+})
 
 /**
  * Lightweight English stemmer / suffix normalizer.
@@ -127,6 +127,18 @@ export function stemToken(word: string): string {
   return s
 }
 
+// Handle common fused compound words (e.g. webchat -> web, chat)
+const FUSED_COMPOUNDS: Record<string, string[]> = Object.assign(Object.create(null), {
+  webchat: ['web', 'chat'],
+  codebase: ['code', 'base'],
+  filesystem: ['file', 'system'],
+  darkmode: ['dark', 'mode'],
+  lightmode: ['light', 'mode'],
+  datatype: ['data', 'type'],
+  filepath: ['file', 'path'],
+  filename: ['file', 'name'],
+})
+
 /**
  * Splits camelCase, PascalCase, snake_case, kebab-case, and compound words.
  */
@@ -153,20 +165,9 @@ export function splitCompound(text: string): string[] {
     }
   }
 
-  // Handle common fused compound words (e.g. webchat -> web, chat)
-  const fusedCompounds: Record<string, string[]> = {
-    webchat: ['web', 'chat'],
-    codebase: ['code', 'base'],
-    filesystem: ['file', 'system'],
-    darkmode: ['dark', 'mode'],
-    lightmode: ['light', 'mode'],
-    datatype: ['data', 'type'],
-    filepath: ['file', 'path'],
-    filename: ['file', 'name'],
-  }
   for (const part of [...pieces]) {
-    const sub = fusedCompounds[part]
-    if (sub) {
+    const sub = FUSED_COMPOUNDS[part]
+    if (Array.isArray(sub)) {
       for (const s of sub) {
         if (!pieces.includes(s)) pieces.push(s)
       }
@@ -207,7 +208,7 @@ export function expandQueryLocally(instruction: string): ExpandedQuery {
 
     // Domain synonym lookup
     const synonyms = DOMAIN_SYNONYMS[piece] ?? DOMAIN_SYNONYMS[stem]
-    if (synonyms) {
+    if (Array.isArray(synonyms)) {
       for (const syn of synonyms) {
         expandedSet.add(syn)
       }

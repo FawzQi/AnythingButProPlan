@@ -52,6 +52,17 @@ describe('expandQueryLocally', () => {
     expect(expanded.allTerms).toContain('auth')
     expect(expanded.allTerms).toContain('session')
   })
+
+  it('safely handles JavaScript prototype property names without error', () => {
+    // Words like constructor, toString, valueOf, hasOwnProperty must not cause "sub is not iterable"
+    expect(() => {
+      expandQueryLocally('constructor toString valueOf hasOwnProperty prototype')
+    }).not.toThrow()
+
+    const expanded = expandQueryLocally('constructor toString valueOf hasOwnProperty prototype')
+    expect(expanded.allTerms).toBeDefined()
+    expect(expanded.allTerms.length).toBeGreaterThan(0)
+  })
 })
 
 describe('Bm25Index multi-channel ranking', () => {
