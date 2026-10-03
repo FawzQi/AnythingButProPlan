@@ -125,6 +125,25 @@ export default function App(): ReactElement {
     return off;
   }, [setWebChatStatus]);
 
+  useEffect(() => {
+    const off = window.AnythingButProPlan.onWebChatResponsePushed(
+      async ({ target, text }) => {
+        if (!text || text.trim() === "") return;
+        const current = useAppStore.getState().rawResponse;
+        if (text === current) return;
+        await useAppStore.getState().setResponse(text);
+        const targetLabel =
+          useAppStore
+            .getState()
+            .webChatTargets.find((t) => t.id === target)?.label ?? "web chat";
+        useAppStore
+          .getState()
+          .setNotice(`Response auto-copied from ${targetLabel}.`);
+      },
+    );
+    return off;
+  }, []);
+
   // Conversion and index progress arrive as main-process events. Subscribed
   // here, above the mode branch, so a conversion started in research mode
   // keeps updating its progress bar if the user flips to coding mode and

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, clipboard, type WebContents } from "electron";
 import type {
+  WebChatResponsePushedPayload,
   WebChatSendResult,
   WebChatStatus,
   WebChatTargetId,
@@ -216,7 +217,17 @@ export const WEB_CHAT_TARGETS: WebChatTarget[] = [
       'button[aria-label*="Copy" i]',
       'div[role="button"][title*="Copy" i]',
       'button[title*="Copy" i]',
+      'div[role="button"][aria-label*="复制"]',
+      'button[aria-label*="复制"]',
+      'div[role="button"][title*="复制"]',
+      'button[title*="复制"]',
+      '.ds-icon-button[aria-label*="Copy" i]',
+      '.ds-icon-button[title*="Copy" i]',
+      '.ds-icon-button[aria-label*="复制"]',
       '[data-testid*="copy" i]',
+      'button[class*="copy" i]',
+      'div[role="button"][class*="copy" i]',
+      '.ds-icon-button[class*="copy" i]',
     ],
     fileSelectors: ['input[type="file"]'],
   },
@@ -378,21 +389,66 @@ export function setWebChatStatusListener(
   statusListener = listener;
 }
 
+let responsePushListener:
+  | ((payload: WebChatResponsePushedPayload) => void)
+  | null = null;
+
+export function setWebChatResponsePushListener(
+  listener: ((payload: WebChatResponsePushedPayload) => void) | null,
+): void {
+  responsePushListener = listener;
+}
+
 /**
  * Update one target's status. Short-circuits when the value is unchanged so
  * the poller's 500 ms ticks do not flood the renderer with identical
  * payloads — only real transitions (idle → working, working → paused,
  * …) reach the IPC bridge.
+ *
+ * When shifting from 'working' to 'idle', triggers autoCopyLatestResponse to
+ * extract the AI's reply and populate the app's Response panel.
  */
 function setStatus(target: WebChatTargetId, status: WebChatStatus): void {
-  if (statuses.get(target) === status) return;
+  const prev = statuses.get(target) ?? "idle";
+  if (prev === status) return;
   statuses.set(target, status);
   statusListener?.(getWebChatStatuses());
 }
 
 const windows = new Map<WebChatTargetId, BrowserWindow>();
+const generationObserved = new Map<WebChatTargetId, boolean>();
 
-const STATUS_POLL_INTERVAL_MS = 1500;
+/** @internal test helper */
+export function _setWindowForTest(
+  targetId: WebChatTargetId,
+  win: BrowserWindow | null,
+): void {
+  if (win) {
+    windows.set(targetId, win);
+  } else {
+    windows.delete(targetId);
+    idleStreakCounts.delete(targetId);
+    generationObserved.delete(targetId);
+  }
+}
+
+/** @internal test helper */
+export function _setStatusForTest(
+  targetId: WebChatTargetId,
+  status: WebChatStatus,
+): void {
+  setStatus(targetId, status);
+}
+
+/** @internal test helper */
+export function _setGenerationObservedForTest(
+  targetId: WebChatTargetId,
+  observed: boolean,
+): void {
+  generationObserved.set(targetId, observed);
+}
+
+const STATUS_POLL_INTERVAL_MS = 1000;
 
 /**
  * In-page inspection script executed periodically in each open web chat window.
@@ -402,7 +458,9 @@ const STATUS_POLL_INTERVAL_MS = 1500;
  *   - 'idle': none of the above
  */
 const STATUS_INSPECTION_SCRIPT = `(() => {
+  // If deliverPrompt page script explicitly flagged paused or working, honor it immediately
   if (window.__AnythingButProPlanWebChatStatus === 'paused') return 'paused';
+  if (window.__AnythingButProPlanWebChatStatus === 'working') return 'working';
 
   const isVisible = (el) => {
     if (!el) return false;
@@ -435,19 +493,8 @@ const STATUS_INSPECTION_SCRIPT = `(() => {
     }
   }
 
-  // 2. Detect WORKING state (Stop button, reasoning/thinking indicator, or active stream)
-  for (const b of allClickables) {
-    if (!isVisible(b)) continue;
-    const label = ((b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '') + ' ' + (b.textContent || '')).toLowerCase();
-    if (/\\b(stop|stop generating|停止|停止生成)\\b/i.test(label)) {
-      return 'working';
-    }
-    // DeepSeek stop button: contains square rect or has stop in class/title
-    if (b.querySelector('rect') || (b.classList.contains('ds-icon-button') && label.includes('stop'))) {
-      return 'working';
-    }
-  }
-
+  // 2. Detect WORKING state
+  // A. Stop buttons & selectors
   const stopSels = [
     'div[role="button"][aria-label*="Stop" i]',
     'button[aria-label*="Stop" i]',
@@ -455,6 +502,16 @@ const STATUS_INSPECTION_SCRIPT = `(() => {
     'button[title*="Stop" i]',
     '[aria-label*="停止" i]',
     '[title*="停止" i]',
+    'button[data-testid="stop-button"]',
+    'button[aria-label="Stop response"]',
+    'button[aria-label="Stop generating"]',
+    '.ds-icon-button[aria-label*="Stop" i]',
+    '.ds-icon-button[aria-label*="停止" i]',
+    '.ds-icon-button[title*="Stop" i]',
+    '.ds-icon-button[title*="停止" i]',
+    'div[role="button"][class*="stop" i]',
+    'button[class*="stop" i]',
+    '.ds-icon-button[class*="stop" i]',
   ];
   for (const s of stopSels) {
     try {
@@ -463,60 +520,145 @@ const STATUS_INSPECTION_SCRIPT = `(() => {
     } catch {}
   }
 
-  const busyEls = document.querySelectorAll(
-    '.ds-loading, [class*="thinking" i], [class*="reasoning" i], [class*="loading" i], [class*="spinner" i], [class*="streaming" i], [aria-busy="true"]'
+  // B. Composer stop button (DeepSeek and others replace send button with stop inside composer)
+  const composer = document.querySelector('textarea#chat-input, textarea[placeholder], div[contenteditable="true"]')?.closest('div[class*="input" i], form');
+  if (composer) {
+    const composerStop = composer.querySelector(
+      'div[role="button"][class*="stop" i], button[class*="stop" i], .ds-icon-button[class*="stop" i], [aria-label*="stop" i], [aria-label*="停止" i]'
+    );
+    if (isVisible(composerStop)) return 'working';
+
+    // DeepSeek stop button SVG has a square rect or stop path inside the composer action button
+    const composerButtons = composer.querySelectorAll('button, [role="button"], .ds-icon-button');
+    for (const b of composerButtons) {
+      if (!isVisible(b)) continue;
+      const rect = b.querySelector('svg rect');
+      if (rect) {
+        const w = parseFloat(rect.getAttribute('width') || '0');
+        const h = parseFloat(rect.getAttribute('height') || '0');
+        if (w >= 4 && h >= 4) return 'working';
+      }
+    }
+  }
+
+  // C. Button text or aria-label indicating stop
+  const buttons = document.querySelectorAll('button, [role="button"]');
+  for (const b of buttons) {
+    if (!isVisible(b)) continue;
+    const label = ((b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '')).toLowerCase();
+    const text = (b.textContent || '').trim().toLowerCase();
+    if (/^(stop|stop generating|停止|停止生成|停止思考)$/.test(text) || /\\b(stop generating|停止生成|停止思考)\\b/.test(label)) {
+      return 'working';
+    }
+  }
+
+  // D. Active streaming cursor
+  const cursorEls = document.querySelectorAll(
+    '.ds-cursor, span[class~="cursor" i], .result-streaming, [data-is-streaming="true"]'
   );
-  for (const el of busyEls) {
+  for (const el of cursorEls) {
     if (isVisible(el)) return 'working';
   }
 
-  // Check if response text is actively changing (streaming tokens)
-  const respEls = document.querySelectorAll(
-    '.ds-markdown, div[class*="markdown" i], div[class*="message-content" i]'
+  // E. Thinking / reasoning / loading / busy state
+  const busyEls = document.querySelectorAll(
+    '.ds-thinking, [class*="thinking" i], [class*="reasoning" i], [class*="generating" i], [class*="loading" i], [class*="spinner" i], [aria-busy="true"], mat-progress-spinner, [role="progressbar"]'
   );
-  let currentLen = 0;
-  if (respEls.length > 0) {
-    const lastEl = respEls[respEls.length - 1];
-    currentLen = (lastEl.textContent || '').length;
-  }
-  const now = Date.now();
-  const prevLen = window.__AnythingButProPlanPrevLen ?? 0;
-  const prevTime = window.__AnythingButProPlanPrevTime ?? 0;
-  window.__AnythingButProPlanPrevLen = currentLen;
-  window.__AnythingButProPlanPrevTime = now;
-
-  if (prevTime > 0 && (now - prevTime) < 3500 && currentLen !== prevLen && currentLen > 0) {
-    return 'working';
+  for (const el of busyEls) {
+    if (isVisible(el)) {
+      if (el.closest('nav, aside, [role="navigation"], [class*="sidebar" i], [class*="history" i], [class*="chat-list" i], [class*="menu" i]')) continue;
+      return 'working';
+    }
   }
 
-  if (window.__AnythingButProPlanWebChatStatus === 'working') {
-    return 'working';
+  // F. Assistant message text streaming/growth detection
+  const respSels = [
+    '.ds-markdown',
+    '[data-message-author-role="assistant"] .markdown',
+    '[data-message-author-role="assistant"]',
+    '.font-claude-message',
+    '[data-testid="assistant-message"]',
+    'model-response',
+    '.model-response-text',
+    'div[class*="markdown" i]'
+  ];
+  for (const sel of respSels) {
+    const nodes = document.querySelectorAll(sel);
+    if (nodes && nodes.length > 0) {
+      const last = nodes[nodes.length - 1];
+      if (isVisible(last)) {
+        const text = (last.textContent || '').trim();
+        if (text.length > 0) {
+          if (window.__AnythingButProPlanLastObservedText !== undefined) {
+            if (text !== window.__AnythingButProPlanLastObservedText) {
+              window.__AnythingButProPlanLastObservedText = text;
+              return 'working';
+            }
+          }
+          window.__AnythingButProPlanLastObservedText = text;
+        }
+      }
+      break;
+    }
   }
 
   return 'idle';
 })()`;
+
+const IDLE_CONFIRMATION_THRESHOLD = 2; // Require 2 consecutive 'idle' polls (at 1000ms = 2s) to transition to idle
+const idleStreakCounts = new Map<WebChatTargetId, number>();
 
 async function pollOpenWindowsStatus(): Promise<void> {
   if (windows.size === 0) return;
   for (const [targetId, win] of windows) {
     if (win.isDestroyed() || win.webContents.isDestroyed()) {
       windows.delete(targetId);
+      idleStreakCounts.delete(targetId);
       setStatus(targetId, "idle");
       continue;
     }
-    if (win.webContents.isLoading()) continue;
+    if (typeof win.webContents.isLoading === "function" && win.webContents.isLoading()) continue;
     try {
       const status = (await win.webContents.executeJavaScript(
         STATUS_INSPECTION_SCRIPT,
         true,
       )) as WebChatStatus;
-      if (status === "paused" || status === "working" || status === "idle") {
-        setStatus(targetId, status);
+
+      const current = statuses.get(targetId) ?? "idle";
+
+      if (status === "working") {
+        idleStreakCounts.set(targetId, 0);
+        generationObserved.set(targetId, true);
+        setStatus(targetId, "working");
+      } else if (status === "paused") {
+        idleStreakCounts.set(targetId, 0);
+        setStatus(targetId, "paused");
+      } else if (status === "idle") {
+        const streak = (idleStreakCounts.get(targetId) ?? 0) + 1;
+        idleStreakCounts.set(targetId, streak);
+
+        if (current === "working" || current === "paused") {
+          if (streak >= IDLE_CONFIRMATION_THRESHOLD) {
+            setStatus(targetId, "idle");
+            if (generationObserved.get(targetId) === true) {
+              generationObserved.set(targetId, false);
+              void autoCopyLatestResponse(targetId);
+            }
+          }
+          // Debounce: transient drops maintain working/paused state
+        } else {
+          setStatus(targetId, "idle");
+        }
       }
     } catch {
       // Window navigating or busy; ignore
     }
   }
+}
+
+/** @internal test helper */
+export async function _pollOpenWindowsStatusForTest(): Promise<void> {
+  await pollOpenWindowsStatus();
 }
 
 let liveStatusTimer: NodeJS.Timeout | null = null;
@@ -702,6 +844,131 @@ async function ensureWindow(target: WebChatTarget): Promise<BrowserWindow> {
  * has to happen in a focused document (see `deliverPrompt`), and the window
  * is deliberately unfocused for the whole typing/submitting/waiting phase.
  */
+const CLEAN_ASSISTANT_TEXT_FUNCTION = `
+  const UI_LABEL = /^(copy|download|edit|share|retry|regenerate|model|think|thought|reasoning|复制|下载|编辑|分享|重试)$/i;
+  const BLOCK_TAGS = new Set([
+    'p','div','section','article','header','footer','main','aside','nav',
+    'h1','h2','h3','h4','h5','h6','li','ul','ol','blockquote','table','thead','tbody','tr','hr','figure','figcaption','dl','dt','dd'
+  ]);
+  const FENCE = '\\x60\\x60\\x60';
+  const BACKTICK = '\\x60';
+
+  const cleanAssistantText = (node) => {
+    try {
+      const clone = node.cloneNode(true);
+      clone
+        .querySelectorAll(
+          'button, [role="button"], [aria-label*="Copy" i], [aria-label*="Download" i], ' +
+          '[class*="header" i], [class*="toolbar" i], [class*="code-header" i], [class*="code_header" i]'
+        )
+        .forEach((el) => {
+          if (
+            el.querySelector('button, [role="button"]') ||
+            el.closest('pre') ||
+            el.closest('[class*="code-block" i], [class*="codeblock" i]') ||
+            el.nextElementSibling?.tagName?.toLowerCase() === 'pre' ||
+            /code-header|code_header|code-toolbar/i.test(el.className || '')
+          ) {
+            el.remove();
+          }
+        });
+
+      const out = [];
+      const walk = (n) => {
+        if (!n) return;
+        if (n.nodeType === 3) {
+          const v = n.nodeValue || '';
+          if (v.length > 0) out.push(v);
+          return;
+        }
+        if (n.nodeType !== 1) return;
+        const tag = n.tagName ? n.tagName.toLowerCase() : '';
+        if (tag === 'script' || tag === 'style' || tag === 'noscript') return;
+        if (tag === 'br') { out.push('\\n'); return; }
+
+        if (/^h[1-6]$/.test(tag)) {
+          const level = parseInt(tag[1], 10);
+          const prefix = '#'.repeat(level) + ' ';
+          out.push('\\n\\n' + prefix);
+          const kids = n.childNodes || [];
+          for (let i = 0; i < kids.length; i++) walk(kids[i]);
+          out.push('\\n\\n');
+          return;
+        }
+
+        if (tag === 'li') {
+          out.push('\\n- ');
+          const kids = n.childNodes || [];
+          for (let i = 0; i < kids.length; i++) walk(kids[i]);
+          out.push('\\n');
+          return;
+        }
+
+        if (tag === 'strong' || tag === 'b') {
+          out.push('**');
+          const kids = n.childNodes || [];
+          for (let i = 0; i < kids.length; i++) walk(kids[i]);
+          out.push('**');
+          return;
+        }
+
+        if (tag === 'em' || tag === 'i') {
+          out.push('*');
+          const kids = n.childNodes || [];
+          for (let i = 0; i < kids.length; i++) walk(kids[i]);
+          out.push('*');
+          return;
+        }
+
+        if (tag === 'pre') {
+          const codeEl = n.querySelector('code');
+          const codeText = ((codeEl || n).textContent || '').replace(/\\n+$/, '');
+          let lang = '';
+          if (codeEl) {
+            const cls = typeof codeEl.className === 'string' ? codeEl.className : '';
+            const m = cls.match(/language-([a-z0-9+#._-]+)/i);
+            if (m) lang = m[1];
+          }
+          if (!lang) {
+            const dataLang = n.getAttribute && n.getAttribute('data-language');
+            if (dataLang) lang = dataLang;
+          }
+          out.push('\\n\\n' + FENCE + lang + '\\n' + codeText + '\\n' + FENCE + '\\n');
+          return;
+        }
+
+        if (tag === 'code') {
+          out.push(BACKTICK + (n.textContent || '') + BACKTICK);
+          return;
+        }
+
+        const isBlock = BLOCK_TAGS.has(tag);
+        if (isBlock) out.push('\\n');
+        const kids = n.childNodes || [];
+        for (let i = 0; i < kids.length; i++) walk(kids[i]);
+        if (isBlock) out.push('\\n');
+      };
+
+      walk(clone);
+      const raw = out
+        .join('')
+        .replace(/[ \\t]+$/gm, '')
+        .replace(/\\n{3,}/g, '\\n\\n')
+        .trim();
+      const lines = raw.split('\\n');
+      const kept = [];
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.length < 30 && UI_LABEL.test(trimmed)) continue;
+        kept.push(line);
+      }
+      return kept.join('\\n').trim();
+    } catch {
+      return (node.innerText || '').trim();
+    }
+  };
+`;
+
 function buildScript(target: WebChatTarget, prompt: string): string {
   return `(async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -719,86 +986,7 @@ function buildScript(target: WebChatTarget, prompt: string): string {
     return out;
   };
 
-  // Assistant messages carry an action bar (Copy, Download, Retry, …) inside
-  // the same element as the reply itself. Reading innerText on the container
-  // picks those labels up as literal lines *and* flattens every pre/code
-  // block into a run of raw text with no fence markers, so the parser cannot
-  // tell code from prose and a reply shaped "full file, then explanation,
-  // then debug" lands in the file as one blob. The scrape is the *fallback*
-  // when the clipboard path misses, but it has to produce the same shape the
-  // copy button would: fences around every code block, blank lines between
-  // blocks, headings and lists preserved. So instead of reading innerText we
-  // walk the DOM and re-emit markdown — pre/code with a language-x class
-  // becomes a fenced block tagged x, block elements get newlines around
-  // them, br becomes a newline, and inline code keeps its backticks so it is
-  // not mistaken for prose. Button-shaped descendants are removed before the
-  // walk, and a small set of known action-bar labels is dropped line-by-line
-  // as a backstop for sites that render the bar as plain divs.
-  const UI_LABEL = /^(Copy|Copy code|Copy message|Copy turn|Download|Retry|Regenerate|Edit|Share|Save|Read aloud|Good response|Bad response|Rate this response|Thumbs up|Thumbs down)$/i;
-  const BLOCK_TAGS = new Set(['p','div','section','article','header','footer','main','aside','nav','h1','h2','h3','h4','h5','h6','li','ul','ol','blockquote','table','thead','tbody','tr','hr','figure','figcaption','dl','dt','dd']);
-  const FENCE = '\`\`\`';
-  const BACKTICK = '\`';
-  const cleanAssistantText = (node) => {
-    try {
-      const clone = node.cloneNode(true);
-      clone
-        .querySelectorAll('button, [role="button"], [aria-label*="Copy" i], [aria-label*="Download" i]')
-        .forEach((el) => el.remove());
-      const out = [];
-      const walk = (n) => {
-        if (!n) return;
-        if (n.nodeType === 3) {
-          const v = n.nodeValue || '';
-          if (v.length > 0) out.push(v);
-          return;
-        }
-        if (n.nodeType !== 1) return;
-        const tag = n.tagName ? n.tagName.toLowerCase() : '';
-        if (tag === 'script' || tag === 'style' || tag === 'noscript') return;
-        if (tag === 'br') { out.push('\\n'); return; }
-        if (tag === 'pre') {
-          const codeEl = n.querySelector('code');
-          const codeText = ((codeEl || n).textContent || '').replace(/\\n+$/, '');
-          let lang = '';
-          if (codeEl) {
-            const cls = typeof codeEl.className === 'string' ? codeEl.className : '';
-            const m = cls.match(/language-([a-z0-9+#._-]+)/i);
-            if (m) lang = m[1];
-          }
-          if (!lang) {
-            const dataLang = n.getAttribute && n.getAttribute('data-language');
-            if (dataLang) lang = dataLang;
-          }
-          out.push('\\n\\n' + FENCE + lang + '\\n' + codeText + '\\n' + FENCE + '\\n');
-          return;
-        }
-        if (tag === 'code') {
-          out.push(BACKTICK + (n.textContent || '') + BACKTICK);
-          return;
-        }
-        const isBlock = BLOCK_TAGS.has(tag);
-        if (isBlock) out.push('\\n');
-        const kids = n.childNodes || [];
-        for (let i = 0; i < kids.length; i++) walk(kids[i]);
-        if (isBlock) out.push('\\n');
-      };
-      walk(clone);
-      const raw = out
-        .join('')
-        .replace(/[ \\t]+$/gm, '')
-        .replace(/\\n{3,}/g, '\\n\\n')
-        .trim();
-      const lines = raw.split('\\n');
-      const kept = [];
-      for (const line of lines) {
-        if (UI_LABEL.test(line.trim())) continue;
-        kept.push(line);
-      }
-      return kept.join('\\n').trim();
-    } catch {
-      return (node.innerText || '').trim();
-    }
-  };
+  ${CLEAN_ASSISTANT_TEXT_FUNCTION}
 
   const inputSels = ${JSON.stringify(target.inputSelectors)};
   const sendSels = ${JSON.stringify(target.sendSelectors)};
@@ -924,7 +1112,10 @@ function buildScript(target: WebChatTarget, prompt: string): string {
 
   await sleep(900);
   while (Date.now() - started < MAX_MS) {
-    if (aborted()) return { ok: false, error: 'Cancelled.' };
+    if (aborted()) {
+      window.__AnythingButProPlanWebChatStatus = 'idle';
+      return { ok: false, error: 'Cancelled.' };
+    }
     await sleep(500);
 
     const nodes = queryAll(respSels);
@@ -984,6 +1175,7 @@ function buildScript(target: WebChatTarget, prompt: string): string {
         // The reply has settled. Report it as stable: true so the main
         // process knows to attempt the copy-to-clipboard upgrade before
         // falling back to this text.
+        window.__AnythingButProPlanWebChatStatus = 'idle';
         return { ok: true, stable: true, text: current };
       }
     } else {
@@ -992,6 +1184,7 @@ function buildScript(target: WebChatTarget, prompt: string): string {
     lastText = current;
   }
 
+  window.__AnythingButProPlanWebChatStatus = 'idle';
   if (sawAny) return { ok: true, stable: false, text: lastText };
   return { ok: false, error: 'Timed out waiting for a response.' };
 })()`;
@@ -1013,6 +1206,33 @@ function buildScript(target: WebChatTarget, prompt: string): string {
  */
 function buildCollectCopyCandidatesScript(target: WebChatTarget): string {
   return `(() => {
+    // 1. Hook navigator.clipboard.writeText so we can capture the markdown string directly
+    // in memory even if Chromium denies OS clipboard write due to document focus.
+    window.__AnythingButProPlanCapturedCopy = null;
+    if (!window.__AnythingButProPlanClipboardHooked) {
+      window.__AnythingButProPlanClipboardHooked = true;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          const origWrite = navigator.clipboard.writeText.bind(navigator.clipboard);
+          navigator.clipboard.writeText = async function(text) {
+            window.__AnythingButProPlanCapturedCopy = text;
+            try {
+              return await origWrite(text);
+            } catch (err) {
+              // Ignore focus errors - text is already captured!
+            }
+          };
+        }
+      } catch (e) {}
+
+      document.addEventListener('copy', (e) => {
+        try {
+          const data = e.clipboardData?.getData('text/plain');
+          if (data) window.__AnythingButProPlanCapturedCopy = data;
+        } catch {}
+      }, true);
+    }
+
     const queryAll = (sels) => {
       const out = [];
       for (const s of sels) {
@@ -1020,36 +1240,105 @@ function buildCollectCopyCandidatesScript(target: WebChatTarget): string {
       }
       return out;
     };
+
+    const isVisible = (el) => {
+      if (!el) return false;
+      return !!(el.offsetWidth || el.offsetHeight || (el.getClientRects && el.getClientRects().length > 0));
+    };
+
+    const isForbidden = (el) => {
+      if (!el) return true;
+      if (el.closest('form, div[class*="input" i], textarea, [class*="composer" i], [class*="chat-input" i], #chat-input, [data-message-author-role="user"], [class*="user-message" i], [class*="user_message" i]')) return true;
+      const label = (el.getAttribute('aria-label') || '').trim();
+      const title = (el.getAttribute('title') || '').trim();
+      const text = (el.textContent || '').trim();
+      const cls = (typeof el.className === 'string' ? el.className : '').trim();
+      const combined = (label + ' ' + title + ' ' + text + ' ' + cls).toLowerCase();
+      return /regenerat|retry|edit|share|like|dislike|thumb|report|delete|send|submit|重新生成|重试|编辑|分享|点赞|点踩|删除|发送/i.test(combined);
+    };
+
     const copySels = ${JSON.stringify(
       target.copySelectors ?? [
         'button[aria-label*="Copy" i]',
         'div[role="button"][aria-label*="Copy" i]',
       ],
     )};
-    const insideCode = (el) => {
-      let node = el.parentElement;
-      let depth = 0;
-      while (node && depth < 6) {
-        const tag = node.tagName ? node.tagName.toLowerCase() : '';
-        if (tag === 'pre' || tag === 'code') return true;
-        const cls = typeof node.className === 'string' ? node.className : '';
-        if (cls && /\\bcode\\b/i.test(cls)) return true;
-        node = node.parentElement;
-        depth++;
+
+    const allButtons = document.querySelectorAll('button, [role="button"], .ds-icon-button, [data-testid*="copy" i]');
+    const seen = new Set();
+    const candidates = [];
+
+    // First: query target-configured copy selectors
+    for (const el of queryAll(copySels)) {
+      if (!el || seen.has(el) || !isVisible(el) || isForbidden(el)) continue;
+      seen.add(el);
+      candidates.push(el);
+    }
+
+    // Second: scan all buttons for copy / 复制 keywords or copy SVG icons
+    for (const b of allButtons) {
+      if (!b || seen.has(b) || !isVisible(b) || isForbidden(b)) continue;
+      const label = (b.getAttribute('aria-label') || '').trim();
+      const title = (b.getAttribute('title') || '').trim();
+      const text = (b.textContent || '').trim();
+      const cls = (typeof b.className === 'string' ? b.className : '').trim();
+      const combined = (label + ' ' + title + ' ' + text + ' ' + cls).toLowerCase();
+
+      let isMatch = combined.includes('copy') || combined.includes('复制') || combined.includes('拷贝');
+      if (!isMatch) {
+        const svgs = b.querySelectorAll('svg');
+        for (const s of svgs) {
+          const sLabel = ((s.getAttribute('aria-label') || '') + ' ' + (s.getAttribute('name') || '')).toLowerCase();
+          if (sLabel.includes('copy') || sLabel.includes('复制') || sLabel.includes('拷贝')) {
+            isMatch = true;
+            break;
+          }
+        }
+      }
+
+      if (isMatch) {
+        seen.add(b);
+        candidates.push(b);
+      }
+    }
+
+    const isCodeBlockControl = (el) => {
+      if (!el) return true;
+      // 1. Inside pre, code, or syntax highlighter / code block wrapper
+      if (el.closest('pre, code, [class*="code-block" i], [class*="codeblock" i], [class*="highlight" i], [class*="code-header" i], [class*="code-toolbar" i], [class*="code_header" i], [class*="code-box" i], [class*="codebox" i]')) {
+        return true;
+      }
+      // 2. Immediate parent or nearby ancestor has code/highlight class or contains pre/code
+      let p = el.parentElement;
+      let d = 0;
+      while (p && d < 4) {
+        const pTag = p.tagName ? p.tagName.toLowerCase() : '';
+        if (pTag === 'pre' || pTag === 'code') return true;
+        const pCls = (typeof p.className === 'string' ? p.className : '').toLowerCase();
+        if (pCls.includes('code') || pCls.includes('highlight') || pCls.includes('syntax') || pCls.includes('snippet')) {
+          if (p.querySelector && p.querySelector('pre, code')) return true;
+        }
+        p = p.parentElement;
+        d++;
+      }
+      // 3. Label/title/text explicitly referencing code/snippet/代码/代码块
+      const label = ((el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('title') || '') + ' ' + (el.textContent || '')).toLowerCase();
+      if (/\b(code|snippet)\b|代码|代码块/.test(label)) {
+        return true;
+      }
+      // 4. Test ID or attribute indicating code copy
+      const testid = ((el.getAttribute('data-testid') || '') + ' ' + (el.getAttribute('data-code') || '')).toLowerCase();
+      if (/code/.test(testid)) {
+        return true;
       }
       return false;
     };
-    const els = queryAll(copySels);
-    const seen = new Set();
-    const visible = [];
-    for (const el of els) {
-      if (!el || seen.has(el)) continue;
-      seen.add(el);
-      if (el.offsetParent === null) continue;
-      visible.push(el);
-    }
-    const pool = visible.filter((el) => !insideCode(el));
-    const final = pool.length > 0 ? pool : visible;
+
+    const outerPool = candidates.filter((el) => !isCodeBlockControl(el));
+    // CRITICAL: NEVER fall back to code-block buttons if outerPool is empty.
+    // Falling back to DOM scraping is infinitely better than copying a single code snippet!
+    const final = outerPool;
+
     window.__AnythingButProPlanCopyCandidates = final;
     return final.length;
   })()`;
@@ -1073,80 +1362,314 @@ async function collectCopyCandidates(
 async function clickCopyCandidate(
   win: BrowserWindow,
   index: number,
-): Promise<boolean> {
+): Promise<{ clicked: boolean; capturedText: string | null }> {
   try {
-    const clicked = (await win.webContents.executeJavaScript(
+    const res = (await win.webContents.executeJavaScript(
       `(() => {
+        window.__AnythingButProPlanCapturedCopy = null;
         const el = (window.__AnythingButProPlanCopyCandidates || [])[${index}];
-        if (!el) return false;
-        try { el.click(); return true; } catch { return false; }
+        if (!el) return { clicked: false, capturedText: null };
+        if (el.closest('form, div[class*="input" i], textarea, [class*="composer" i], [class*="chat-input" i], #chat-input, [data-message-author-role="user"], [class*="user-message" i], [class*="user_message" i]')) {
+          return { clicked: false, capturedText: null };
+        }
+        const label = ((el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('title') || '') + ' ' + (el.textContent || '') + ' ' + (el.className || '')).toLowerCase();
+        if (/regenerat|retry|edit|share|like|dislike|thumb|report|delete|send|submit|重新生成|重试|编辑|分享|删除|发送/i.test(label)) {
+          return { clicked: false, capturedText: null };
+        }
+        try {
+          try { el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); } catch {}
+          try { el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); } catch {}
+          try { el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })); } catch {}
+          try { el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true })); } catch {}
+          el.click();
+          return { clicked: true, capturedText: window.__AnythingButProPlanCapturedCopy };
+        } catch {
+          return { clicked: false, capturedText: null };
+        }
       })()`,
       true,
-    )) as boolean | undefined;
-    return clicked === true;
+    )) as { clicked?: boolean; capturedText?: string | null } | undefined;
+
+    return {
+      clicked: res?.clicked === true,
+      capturedText: typeof res?.capturedText === "string" ? res.capturedText : null,
+    };
   } catch {
-    return false;
+    return { clicked: false, capturedText: null };
   }
 }
 
 /**
  * Ask the site to copy its reply, click the message-level "Copy" control,
- * and read the result back from the OS clipboard.
- *
- * The newest assistant turn is at the bottom of the transcript, so its
- * action-bar copy button is the bottom-most candidate. We try candidates
- * from the bottom up and take the longest result: a per-block copy returns
- * one fenced block (short), the message-level copy returns the whole turn
- * (which, for a coding-mode reply, contains every fence plus the
- * explanation and debug sections). The longest result is therefore the
- * whole turn in every realistic case.
- *
- * The early-accept shortcut is deliberately strict. Its only purpose is to
- * save a couple of `CLIPBOARD_SETTLE_MS` waits on the common path, and a
- * loose test — "contains a fence and is not tiny" — would fire on a single
- * large code block that a per-block copy returned, ending the loop on a
- * fragment. Requiring at least two fence markers *and* a non-trivial body
- * means the only result that can stop the loop early is one that already
- * looks like a whole turn (a fence, then prose, then another fence), which
- * is exactly what the message-level copy produces.
- *
- * A sentinel is planted before each click so a silent no-op can be told
- * apart from a real write: if the clipboard still holds the sentinel, the
- * site's `navigator.clipboard.writeText` never landed — usually because the
- * document was not yet focused, which the caller has already waited on.
+ * and read the result back from in-memory capture or the OS clipboard.
  */
 async function readReplyViaCopy(
   win: BrowserWindow,
   target: WebChatTarget,
+  scrapedBaseline?: string | null,
 ): Promise<string | null> {
   const count = await collectCopyCandidates(win, target);
   if (count === 0) return null;
 
   const sentinel = `__AnythingButProPlan_${Date.now()}__`;
-  // Cap the number of clicks. The message-level control is nearly always in
-  // the bottom few candidates, and every click costs a `CLIPBOARD_SETTLE_MS`
-  // wait — clicking dozens would make a slow send even slower.
-  const maxTries = Math.min(count, 5);
+  const previousClipboard = await clipboard.readText();
+  const maxTries = Math.min(count, 8);
   let best = "";
+  let sawAnyCopy = false;
 
   for (let i = count - 1; i >= count - maxTries; i--) {
-    clipboard.writeText(sentinel);
-    const clicked = await clickCopyCandidate(win, i);
+    await clipboard.writeText(sentinel);
+    const { clicked, capturedText } = await clickCopyCandidate(win, i);
     if (!clicked) continue;
+
     await new Promise((resolve) => setTimeout(resolve, CLIPBOARD_SETTLE_MS));
-    const text = await clipboard.readText();
-    if (!text) continue;
-    if (text === sentinel) continue;
-    if (text.length > best.length) best = text;
-    // Early accept only on a result that already looks like the whole
-    // turn: at least two fence markers plus a body that is more than a
-    // single block. A per-block copy of one large file cannot satisfy
-    // both, so it can never win the loop early.
-    const fenceCount = (text.match(/```/g) || []).length;
-    if (fenceCount >= 2 && text.length > 500) return text;
+
+    // 1. Check in-memory captured copy from navigator.clipboard.writeText hook
+    let candidateText = capturedText;
+    if (!candidateText) {
+      try {
+        const polled = (await win.webContents.executeJavaScript(
+          "window.__AnythingButProPlanCapturedCopy",
+          true,
+        )) as string | null | undefined;
+        if (typeof polled === "string" && polled.length > 0) {
+          candidateText = polled;
+        }
+      } catch {}
+    }
+
+    // 2. Check OS clipboard as well
+    const textFromClipboard = await clipboard.readText();
+    if (textFromClipboard && textFromClipboard !== sentinel) {
+      if (!candidateText || textFromClipboard.length > candidateText.length) {
+        candidateText = textFromClipboard;
+      }
+    }
+
+    if (!candidateText || candidateText === sentinel) continue;
+    sawAnyCopy = true;
+
+    if (candidateText.length > best.length) {
+      best = candidateText;
+    }
+
+    // Accept candidate if it has all expected major sections present in scrapedBaseline
+    const hasKeySections =
+      !scrapedBaseline ||
+      ((!scrapedBaseline.includes("===Explanation===") || candidateText.includes("===Explanation===")) &&
+       (!scrapedBaseline.includes("===Files===") || candidateText.includes("===Files===")) &&
+       (!scrapedBaseline.includes("===Debug===") || candidateText.includes("===Debug===")));
+    const isAdequateLength =
+      !scrapedBaseline || candidateText.length >= scrapedBaseline.length * 0.75;
+
+    if (hasKeySections && isAdequateLength && candidateText.length > 300) {
+      best = candidateText;
+      break;
+    }
   }
 
-  return best.length > 0 ? best : null;
+  // If no copy attempt succeeded at all and window is unfocused, try one attempt with focus
+  if (!sawAnyCopy && typeof win.isFocused === "function" && !win.isFocused() && !win.isDestroyed()) {
+    try {
+      win.focus();
+      win.webContents.focus();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      for (let i = count - 1; i >= count - Math.min(count, 3); i--) {
+        await clipboard.writeText(sentinel);
+        const { clicked, capturedText } = await clickCopyCandidate(win, i);
+        if (!clicked) continue;
+        await new Promise((resolve) => setTimeout(resolve, CLIPBOARD_SETTLE_MS));
+
+        let candidateText = capturedText;
+        if (!candidateText) {
+          try {
+            const polled = (await win.webContents.executeJavaScript(
+              "window.__AnythingButProPlanCapturedCopy",
+              true,
+            )) as string | null | undefined;
+            if (typeof polled === "string" && polled.length > 0) {
+              candidateText = polled;
+            }
+          } catch {}
+        }
+        const textFromClipboard = await clipboard.readText();
+        if (textFromClipboard && textFromClipboard !== sentinel) {
+          if (!candidateText || textFromClipboard.length > candidateText.length) {
+            candidateText = textFromClipboard;
+          }
+        }
+        if (candidateText && candidateText !== sentinel && candidateText.length > best.length) {
+          best = candidateText;
+          break;
+        }
+      }
+    } catch {}
+  }
+
+  // Validate best candidate against scraped baseline if available
+  if (best.length > 0 && scrapedBaseline && scrapedBaseline.trim().length > 0) {
+    const scrapedLen = scrapedBaseline.trim().length;
+    const missingExplanation =
+      scrapedBaseline.includes("===Explanation===") && !best.includes("===Explanation===");
+    const missingFiles =
+      scrapedBaseline.includes("===Files===") && !best.includes("===Files===");
+    const tooShort = best.length < scrapedLen * 0.7;
+
+    if (missingExplanation || missingFiles || tooShort) {
+      // The copied text is only a partial snippet/fragment. Reject in favor of scraped baseline!
+      best = "";
+    }
+  }
+
+  if (best.length === 0) {
+    try {
+      await clipboard.writeText(previousClipboard);
+    } catch {}
+    return null;
+  }
+
+  // Ensure OS clipboard holds the final best markdown copy
+  try {
+    await clipboard.writeText(best);
+  } catch {}
+
+  return best;
+}
+
+function buildScrapeLatestAssistantResponseScript(target: WebChatTarget): string {
+  return `(() => {
+    ${CLEAN_ASSISTANT_TEXT_FUNCTION}
+
+    const respSels = ${JSON.stringify(target.responseSelectors)};
+    const queryAll = (sels) => {
+      const out = [];
+      for (const s of sels) {
+        try { document.querySelectorAll(s).forEach((el) => out.push(el)); } catch {}
+      }
+      return out;
+    };
+
+    const nodes = queryAll(respSels);
+    let latestText = '';
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const t = cleanAssistantText(nodes[i]);
+      if (t && t.length > 0) {
+        latestText = t;
+        break;
+      }
+    }
+    return latestText;
+  })()`;
+}
+
+async function scrapeLatestAssistantResponse(
+  win: BrowserWindow,
+  target: WebChatTarget,
+): Promise<string | null> {
+  try {
+    const text = (await win.webContents.executeJavaScript(
+      buildScrapeLatestAssistantResponseScript(target),
+      true,
+    )) as string | undefined;
+    return typeof text === "string" && text.trim().length > 0 ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+async function extractLatestAssistantResponse(
+  win: BrowserWindow,
+  target: WebChatTarget,
+): Promise<string | null> {
+  const previousClipboard = await clipboard.readText();
+  // 1. Scrape the DOM first to establish a reliable baseline of the full message
+  const scraped = await scrapeLatestAssistantResponse(win, target);
+
+  // 2. Try copying via message action bar button, using scraped as baseline validator
+  let text = await readReplyViaCopy(win, target, scraped);
+
+  if (!text) {
+    try {
+      await clipboard.writeText(previousClipboard);
+    } catch {}
+    text = scraped;
+  }
+  return text && text.trim().length > 0 ? text : null;
+}
+
+const lastCopiedResponses = new Map<WebChatTargetId, string>();
+const extractingTargets = new Set<WebChatTargetId>();
+
+export async function autoCopyLatestResponse(
+  targetId: WebChatTargetId,
+): Promise<string | null> {
+  if (extractingTargets.has(targetId)) return null;
+  extractingTargets.add(targetId);
+
+  try {
+    const win = windows.get(targetId);
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return null;
+
+    const targetObj = findTarget(targetId);
+    if (!targetObj) return null;
+
+    // Small delay to allow the page DOM to settle
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (win.isDestroyed() || win.webContents.isDestroyed()) return null;
+
+    const text = await extractLatestAssistantResponse(win, targetObj);
+    if (!text || text.trim() === "") return null;
+
+    if (lastCopiedResponses.get(targetId) === text) return null;
+    lastCopiedResponses.set(targetId, text);
+
+    try {
+      clipboard.writeText(text);
+    } catch {}
+
+    responsePushListener?.({ target: targetId, text });
+    return text;
+  } catch {
+    return null;
+  } finally {
+    extractingTargets.delete(targetId);
+  }
+}
+
+/**
+ * Manually scrape and copy the latest response from an open web chat window.
+ * Copies the markdown to OS clipboard and returns the result to populate the response panel.
+ */
+export async function scrapeWebChatResponse(
+  targetId: WebChatTargetId,
+): Promise<WebChatSendResult> {
+  const win = windows.get(targetId);
+  const targetObj = findTarget(targetId);
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed() || !targetObj) {
+    return {
+      ok: false,
+      error: `No open web chat window for ${targetObj?.label ?? targetId}.`,
+    };
+  }
+
+  const text = await extractLatestAssistantResponse(win, targetObj);
+  if (!text || text.trim() === "") {
+    return {
+      ok: false,
+      error: `No response found in ${targetObj.label}.`,
+    };
+  }
+
+  lastCopiedResponses.set(targetId, text);
+  try {
+    await clipboard.writeText(text);
+  } catch {}
+
+  return {
+    ok: true,
+    text,
+  };
 }
 
 function describe(error: unknown): string {
@@ -1184,27 +1707,9 @@ async function deliverPrompt(
     // The page has not finished loading; the script sets the flag itself.
   }
 
-  // Mark this target as working immediately, and poll the page-side status
-  // flag while the script runs. `executeJavaScript` resolves only once —
-  // when the entire async page function returns — so a page-side global is
-  // the only way to observe intermediate states. The poller is cleared in
-  // the `finally` below, so the indicator always returns to idle when the
-  // send ends, however it ends.
+  // Mark this target as working immediately and reset idle streak
+  idleStreakCounts.set(target.id, 0);
   setStatus(target.id, "working");
-  const statusPoller = setInterval(() => {
-    win.webContents
-      .executeJavaScript(
-        'window.__AnythingButProPlanWebChatStatus || "working"',
-        true,
-      )
-      .then((value: unknown) => {
-        if (value === "paused") setStatus(target.id, "paused");
-        else setStatus(target.id, "working");
-      })
-      .catch(() => {
-        // The page is navigating or gone; leave the status as-is.
-      });
-  }, 500);
 
   try {
     const raw = (await win.webContents.executeJavaScript(
@@ -1247,18 +1752,31 @@ async function deliverPrompt(
           }
           await new Promise((resolve) => setTimeout(resolve, FOCUS_SETTLE_MS));
         }
-        const fromClipboard = await readReplyViaCopy(win, target);
-        if (fromClipboard) return { ok: true, text: fromClipboard };
+        const fromClipboard = await readReplyViaCopy(win, target, scraped);
+        if (fromClipboard) {
+          lastCopiedResponses.set(target.id, fromClipboard);
+          return { ok: true, text: fromClipboard };
+        }
       } catch {
         // Fall through to the scraped text.
       }
     }
 
+    lastCopiedResponses.set(target.id, scraped);
     return { ok: true, text: scraped };
   } catch (error) {
     return { ok: false, error: `${target.label}: ${describe(error)}` };
   } finally {
-    clearInterval(statusPoller);
+    idleStreakCounts.set(target.id, IDLE_CONFIRMATION_THRESHOLD);
+    generationObserved.set(target.id, false);
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents
+        .executeJavaScript(
+          'window.__AnythingButProPlanWebChatStatus = "idle";',
+          true,
+        )
+        .catch(() => {});
+    }
     setStatus(target.id, "idle");
   }
 }
@@ -1495,11 +2013,14 @@ export async function openWebChat(targetId: WebChatTargetId): Promise<void> {
  * cancellation, not treated as an error.
  */
 export function cancelWebChat(): void {
-  for (const win of windows.values()) {
+  for (const [targetId, win] of windows.entries()) {
     if (win.isDestroyed()) continue;
+    idleStreakCounts.set(targetId, IDLE_CONFIRMATION_THRESHOLD);
+    generationObserved.set(targetId, false);
+    setStatus(targetId, "idle");
     win.webContents
       .executeJavaScript(
-        "window.__AnythingButProPlanWebChatAbort = true;",
+        "window.__AnythingButProPlanWebChatAbort = true; window.__AnythingButProPlanWebChatStatus = 'idle';",
         true,
       )
       .catch(() => undefined);
@@ -1524,6 +2045,8 @@ export function closeAllWebChatWindows(): void {
     clearInterval(liveStatusTimer);
     liveStatusTimer = null;
   }
+  idleStreakCounts.clear();
+  generationObserved.clear();
   for (const win of windows.values()) {
     if (!win.isDestroyed()) win.destroy();
   }

@@ -126,6 +126,7 @@ interface AppState {
    * inside the main process, so the renderer only sees the two edges.
    */
   webChatSending: boolean;
+  scrapingWebChat: boolean;
 
   /**
    * Per-target status of the web chat windows, pushed from the main process
@@ -151,6 +152,7 @@ interface AppState {
   calculateMapTokens: () => Promise<void>;
   sendToWebChat: () => Promise<void>;
   openWebChat: () => Promise<void>;
+  scrapeWebChatResponse: () => Promise<void>;
   setWebChatStatus: (
     statuses: Record<WebChatTargetId, WebChatStatus>,
   ) => void;
@@ -186,6 +188,7 @@ interface AppState {
   discardAllGitPaths: () => Promise<void>;
   commitGitChanges: () => Promise<void>;
   setGitCommitMessage: (message: string) => void;
+  setNotice: (notice: string | null) => void;
   clearNotice: () => void;
 }
 
@@ -259,6 +262,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   mapTokenCount: null,
 
   webChatSending: false,
+  scrapingWebChat: false,
 
   webChatStatus: {
     deepseek: "idle",
@@ -548,6 +552,26 @@ export const useAppStore = create<AppState>((set, get) => ({
       await window.AnythingButProPlan.webChatOpen(target);
     } catch (error) {
       set({ error: message(error) });
+    }
+  },
+
+  scrapeWebChatResponse: async () => {
+    const target = get().aiSettings?.webChatTarget ?? "deepseek";
+    try {
+      set({ scrapingWebChat: true, error: null });
+      const result = await window.AnythingButProPlan.webChatScrapeResponse(target);
+      if (!result.ok) {
+        set({
+          scrapingWebChat: false,
+          error: result.error ?? "Could not scrape response from web chat.",
+        });
+        return;
+      }
+      set({ scrapingWebChat: false });
+      await get().setResponse(result.text ?? "");
+      set({ notice: `Response scraped from ${target}.` });
+    } catch (error) {
+      set({ scrapingWebChat: false, error: message(error) });
     }
   },
 
@@ -1070,6 +1094,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setGitCommitMessage: (message) => set({ gitCommitMessage: message }),
+
+  setNotice: (notice) => set({ notice }),
 
   clearNotice: () => set({ notice: null }),
 }));

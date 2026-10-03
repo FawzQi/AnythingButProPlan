@@ -12,6 +12,14 @@ const deepseek = makeOpenAiCompatibleProvider({
   baseUrl: "https://api.deepseek.com/chat/completions",
 });
 
+const openai = makeOpenAiCompatibleProvider({
+  id: "openai",
+  label: "OpenAI",
+  keyUrl: "https://platform.openai.com/api-keys",
+  models: ["gpt-6-luna", "gpt-5.6-luna"],
+  baseUrl: "https://api.openai.com/v1/chat/completions",
+});
+
 const groq = makeOpenAiCompatibleProvider({
   id: "groq",
   label: "Groq",
@@ -45,6 +53,7 @@ const openrouter = makeOpenAiCompatibleProvider({
 const PROVIDERS: Record<AiProviderId, AiProvider> = {
   deepseek,
   groq,
+  openai,
   openrouter,
   google: googleProvider,
   // TypeSafe is registered for key storage and model selection only. Its

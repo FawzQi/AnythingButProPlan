@@ -39,6 +39,7 @@ import type {
   PromptBuildRequest,
   PromptBuildResult,
   ScanResult,
+  WebChatResponsePushedPayload,
   WebChatSendRequest,
   WebChatSendResult,
   WebChatStatus,
@@ -120,6 +121,8 @@ const api = {
     ipcRenderer.invoke(IpcChannel.WebChatOpen, target),
   webChatCancel: (): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.WebChatCancel),
+  webChatScrapeResponse: (target: WebChatTargetId): Promise<WebChatSendResult> =>
+    ipcRenderer.invoke(IpcChannel.WebChatScrapeResponse, target),
   webChatGetStatus: (): Promise<Record<WebChatTargetId, WebChatStatus>> =>
     ipcRenderer.invoke(IpcChannel.WebChatStatusGet),
   researchScan: (projectRoot: string): Promise<ResearchScanResult> =>
@@ -177,6 +180,18 @@ const api = {
   ): (() => void) =>
     subscribe<Record<WebChatTargetId, WebChatStatus>>(
       IpcChannel.WebChatStatusChanged,
+      callback,
+    ),
+  /**
+   * Subscribe to web chat response pushes. Fires whenever the main process
+   * detects a chat site transition from 'working' to 'idle' and extracts its
+   * latest response.
+   */
+  onWebChatResponsePushed: (
+    callback: (payload: WebChatResponsePushedPayload) => void,
+  ): (() => void) =>
+    subscribe<WebChatResponsePushedPayload>(
+      IpcChannel.WebChatResponsePushed,
       callback,
     ),
 };

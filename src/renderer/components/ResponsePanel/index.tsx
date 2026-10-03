@@ -26,6 +26,10 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
   const setParsedPath = useAppStore((state) => state.setParsedPath);
   const toggleInclude = useAppStore((state) => state.toggleInclude);
   const applySelected = useAppStore((state) => state.applySelected);
+  const scrapingWebChat = useAppStore((state) => state.scrapingWebChat);
+  const scrapeWebChatResponse = useAppStore(
+    (state) => state.scrapeWebChatResponse,
+  );
 
   const [draft, setDraft] = useState(rawResponse);
   const [diffTarget, setDiffTarget] = useState<{
@@ -129,6 +133,14 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
             disabled={draft === ""}
           >
             Clear
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => void scrapeWebChatResponse()}
+            disabled={scrapingWebChat}
+            title="Scrape and copy the latest AI response from the open web chat window"
+          >
+            {scrapingWebChat ? "Scraping…" : "Scrape Web Chat"}
           </Button>
           <Button
             variant="primary"

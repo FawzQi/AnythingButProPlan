@@ -101,7 +101,9 @@ import {
   getWebChatStatuses,
   listWebChatTargets,
   openWebChat,
+  scrapeWebChatResponse,
   sendToWebChat,
+  setWebChatResponsePushListener,
   setWebChatStatusListener,
 } from "./services/web-chat";
 
@@ -215,6 +217,15 @@ export function registerIpcHandlers(): void {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) {
         window.webContents.send(IpcChannel.WebChatStatusChanged, statuses);
+      }
+    }
+  });
+
+  // Relay auto-copied web chat responses to all open renderer windows.
+  setWebChatResponsePushListener((payload) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.webContents.send(IpcChannel.WebChatResponsePushed, payload);
       }
     }
   });
@@ -632,6 +643,13 @@ export function registerIpcHandlers(): void {
     IpcChannel.WebChatStatusGet,
     async (): Promise<Record<WebChatTargetId, WebChatStatus>> => {
       return getWebChatStatuses();
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannel.WebChatScrapeResponse,
+    async (_event, target: unknown): Promise<WebChatSendResult> => {
+      return scrapeWebChatResponse(requireWebChatTarget(target));
     },
   );
 

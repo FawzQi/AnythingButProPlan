@@ -40,6 +40,8 @@ export const IpcChannel = {
   // sync without the renderer having to ask.
   WebChatStatusGet: 'webchat:status-get',
   WebChatStatusChanged: 'webchat:status-changed',
+  WebChatResponsePushed: 'webchat:response-pushed',
+  WebChatScrapeResponse: 'webchat:scrape-response',
   ResearchScan: 'research:scan',
   ResearchConvert: 'research:convert',
   ResearchConvertProgress: 'research:convert-progress',

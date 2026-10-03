@@ -4,32 +4,32 @@
  */
 
 export interface FileNode {
-  id: string
-  name: string
+  id: string;
+  name: string;
   /** POSIX-style path relative to the project root. */
-  path: string
-  type: 'file' | 'directory'
-  children?: FileNode[]
-  selected: boolean
-  expanded: boolean
+  path: string;
+  type: "file" | "directory";
+  children?: FileNode[];
+  selected: boolean;
+  expanded: boolean;
   /** Byte size for files; undefined for directories. */
-  size?: number
+  size?: number;
   /**
    * True when the file's name matches a pattern for files that routinely
    * carry secrets (`.env`, `id_rsa`, `*.pem`, `credentials.json`, …). The
    * tree renders these with a warning indicator and the prompt build reports
    * them, so the user always knows what is about to be pasted into a chat.
    */
-  sensitive?: boolean
+  sensitive?: boolean;
 }
 
 export interface ScanResult {
-  root: string
-  tree: FileNode
+  root: string;
+  tree: FileNode;
   /** Number of files that passed the gitignore/binary filters. */
-  fileCount: number
+  fileCount: number;
   /** Number of entries dropped by .gitignore or the always-skip list. */
-  skippedCount: number
+  skippedCount: number;
 }
 
 /**
@@ -44,20 +44,20 @@ export interface ScanResult {
  */
 export interface RecentFolder {
   /** Absolute path to the folder, as the native picker returned it. */
-  path: string
+  path: string;
   /** Display label. Defaults to the folder's basename. */
-  label: string
+  label: string;
   /** Unix milliseconds of the last time this folder was opened. */
-  lastOpenedAt: number
+  lastOpenedAt: number;
 }
 
 export type PathSource =
-  | 'file-header'
-  | 'first-line-comment'
-  | 'preceding-text'
-  | 'language-hint'
-  | 'delete-header'
-  | 'user'
+  | "file-header"
+  | "first-line-comment"
+  | "preceding-text"
+  | "language-hint"
+  | "delete-header"
+  | "user";
 
 /**
  * One SEARCH/REPLACE pair. The SEARCH text is matched against the file on
@@ -66,8 +66,8 @@ export type PathSource =
  * rejected; the applier never guesses.
  */
 export interface PatchBlock {
-  search: string
-  replace: string
+  search: string;
+  replace: string;
 }
 
 /**
@@ -78,10 +78,10 @@ export interface PatchBlock {
  */
 interface ParsedFileCommon {
   /** Original text the AI wrote for this entry. Kept for the diff view. */
-  rawBlock: string
-  language: string | null
-  pathSource: PathSource
-  content: string
+  rawBlock: string;
+  language: string | null;
+  pathSource: PathSource;
+  content: string;
 }
 
 /**
@@ -99,108 +99,108 @@ interface ParsedFileCommon {
  * with a path) that the parser maintained only by convention.
  */
 export type ParsedFile =
-  | (ParsedFileCommon & { kind: 'full'; path: string })
-  | (ParsedFileCommon & { kind: 'unresolved'; path: null })
-  | (ParsedFileCommon & { kind: 'patch'; path: string; patches: PatchBlock[] })
+  | (ParsedFileCommon & { kind: "full"; path: string })
+  | (ParsedFileCommon & { kind: "unresolved"; path: null })
+  | (ParsedFileCommon & { kind: "patch"; path: string; patches: PatchBlock[] })
   | (ParsedFileCommon & {
-      kind: 'delete'
-      path: string
-      pathSource: 'delete-header'
-    })
+      kind: "delete";
+      path: string;
+      pathSource: "delete-header";
+    });
 
 export type ParseStrategy =
-  | 'markdown'
-  | 'patch'
-  | 'plaintext'
-  | 'delete'
-  | 'user-assisted'
+  | "markdown"
+  | "patch"
+  | "plaintext"
+  | "delete"
+  | "user-assisted";
 
 export interface ParseResult {
-  files: ParsedFile[]
-  strategy: ParseStrategy
-  warnings: string[]
+  files: ParsedFile[];
+  strategy: ParseStrategy;
+  warnings: string[];
 }
 
 export interface ApplyFileInput {
-  path: string
+  path: string;
   /** Ignored when `patches` is present and non-empty, and when `delete` is set. */
-  content: string
-  patches?: PatchBlock[]
+  content: string;
+  patches?: PatchBlock[];
   /**
    * When true, the applier deletes `path` instead of writing any content.
    */
-  delete?: boolean
+  delete?: boolean;
 }
 
 export interface ApplyRequest {
-  projectRoot: string
-  files: ApplyFileInput[]
+  projectRoot: string;
+  files: ApplyFileInput[];
 }
 
 export interface ApplyResult {
-  path: string
+  path: string;
   status:
-    | 'created'
-    | 'overwritten'
-    | 'patched'
-    | 'deleted'
-    | 'skipped'
-    | 'failed'
-  error?: string
+    | "created"
+    | "overwritten"
+    | "patched"
+    | "deleted"
+    | "skipped"
+    | "failed";
+  error?: string;
 }
 
 export interface DeleteFileRequest {
-  projectRoot: string
-  path: string
+  projectRoot: string;
+  path: string;
 }
 
 export interface DeleteFileResult {
   /** `not-found` when the file did not exist on disk. */
-  status: 'deleted' | 'not-found'
+  status: "deleted" | "not-found";
 }
 
 export interface PromptBuildRequest {
-  projectRoot: string
+  projectRoot: string;
   /** POSIX-relative paths of the selected files. */
-  files: string[]
+  files: string[];
 }
 
 export interface PromptBuildResult {
-  prompt: string
-  tokenCount: number
-  fileCount: number
+  prompt: string;
+  tokenCount: number;
+  fileCount: number;
   /** Files that were selected but could not be read. */
-  unreadable: string[]
+  unreadable: string[];
   /**
    * Selected files whose names match a sensitive-file pattern. They are
    * included in `prompt` like any other file — the point is to surface them,
    * not to silently drop them — but the UI warns about them so the user can
    * deselect before copying.
    */
-  sensitiveFiles: string[]
+  sensitiveFiles: string[];
 }
 
 export interface DiffRequest {
-  projectRoot: string
-  path: string
+  projectRoot: string;
+  path: string;
   /** Proposed content; the existing content is read from disk. */
-  content: string
+  content: string;
 }
 
 export interface DiffResult {
-  original: string
-  modified: string
-  exists: boolean
+  original: string;
+  modified: string;
+  exists: boolean;
 }
 
 export interface WriteFileRequest {
-  projectRoot: string
-  path: string
-  content: string
+  projectRoot: string;
+  path: string;
+  content: string;
 }
 
 export interface WriteFileResult {
-  status: 'created' | 'overwritten' | 'skipped'
+  status: "created" | "overwritten" | "skipped";
 }
 
 /**
@@ -214,19 +214,19 @@ export interface WriteFileResult {
  */
 export interface ConfirmDialogRequest {
   /** Primary question, rendered as the dialog's bold headline. */
-  message: string
+  message: string;
   /** Optional secondary paragraph for consequences or extra context. */
-  detail?: string
+  detail?: string;
   /** Label on the affirmative button. Defaults to "OK". */
-  confirmLabel?: string
+  confirmLabel?: string;
   /** Label on the negative button. Defaults to "Cancel". */
-  cancelLabel?: string
+  cancelLabel?: string;
   /**
    * Visual severity, which selects the dialog's icon. `danger` maps to
    * Electron's `warning` icon — the tone exists so callers can express
    * intent without the mapping leaking into every call site.
    */
-  tone?: 'info' | 'question' | 'warning' | 'danger'
+  tone?: "info" | "question" | "warning" | "danger";
 }
 
 /* ------------------------------------------------------------------------ *
@@ -234,20 +234,20 @@ export interface ConfirmDialogRequest {
  * ------------------------------------------------------------------------ */
 
 export type GitFileStatusCode =
-  | 'added'
-  | 'modified'
-  | 'deleted'
-  | 'renamed'
-  | 'copied'
-  | 'typechange'
-  | 'conflicted'
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "typechange"
+  | "conflicted";
 
 export interface GitFileChange {
   /** POSIX-relative path of the current name. */
-  path: string
-  status: GitFileStatusCode
+  path: string;
+  status: GitFileStatusCode;
   /** Previous path for renames and copies; undefined otherwise. */
-  oldPath?: string
+  oldPath?: string;
 }
 
 /**
@@ -257,83 +257,83 @@ export interface GitFileChange {
  */
 export interface GitStatus {
   /** Current branch name, or `null` when HEAD is detached or unborn. */
-  branch: string | null
+  branch: string | null;
   /** Number of commits ahead of upstream. */
-  ahead: number
+  ahead: number;
   /** Number of commits behind upstream. */
-  behind: number
+  behind: number;
   /** Files with staged changes (index differs from HEAD). */
-  staged: GitFileChange[]
+  staged: GitFileChange[];
   /** Files with unstaged changes (working tree differs from index). */
-  unstaged: GitFileChange[]
+  unstaged: GitFileChange[];
   /** Untracked files (present in working tree, not in index). */
-  untracked: string[]
+  untracked: string[];
   /** Files with merge conflicts. */
-  conflicted: GitFileChange[]
+  conflicted: GitFileChange[];
 }
 
 export interface GitInitRequest {
-  projectRoot: string
+  projectRoot: string;
 }
 
 export interface GitInitResult {
   /** True when `.git` was created by this call; false when it already existed. */
-  created: boolean
+  created: boolean;
 }
 
 export interface GitStageRequest {
-  projectRoot: string
-  path: string
+  projectRoot: string;
+  path: string;
 }
 
 export interface GitUnstageRequest {
-  projectRoot: string
-  path: string
+  projectRoot: string;
+  path: string;
 }
 
 export interface GitDiscardRequest {
-  projectRoot: string
-  path: string
+  projectRoot: string;
+  path: string;
   /**
    * When true the file is untracked and the caller wants it removed from
    * disk entirely rather than restored from Git.
    */
-  untracked: boolean
+  untracked: boolean;
 }
 
 export interface GitCommitRequest {
-  projectRoot: string
-  message: string
+  projectRoot: string;
+  message: string;
 }
 
 export interface GitCommitResult {
   /** Full 40-character hash of the new commit. Empty when it could not be read. */
-  commitHash: string
+  commitHash: string;
   /** Raw stdout from `git commit`, useful for the notice banner. */
-  summary: string
+  summary: string;
 }
 
 export interface GitDiffRequest {
-  projectRoot: string
-  path: string
+  projectRoot: string;
+  path: string;
   /**
    * `true` for a staged diff (index vs HEAD), `false` for an unstaged diff
    * (working tree vs index). For untracked files, only the `false` form is
    * meaningful, and `original` is empty.
    */
-  staged: boolean
+  staged: boolean;
 }
 
 export interface GitDiffContent {
   /** Content of the left side of the diff. */
-  original: string
+  original: string;
   /** Content of the right side of the diff. */
-  modified: string
+  modified: string;
   /**
    * Whether either side had content. Used to suppress rendering an empty
    * diff for a file that exists in neither ref.
    */
-  exists: boolean
+  exists: boolean;
 }
 
 /* ------------------------------------------------------------------------ *
@@ -341,17 +341,18 @@ export interface GitDiffContent {
  * ------------------------------------------------------------------------ */
 
 export type AiProviderId =
-  | 'deepseek'
-  | 'groq'
-  | 'openrouter'
-  | 'google'
+  | "deepseek"
+  | "groq"
+  | "openai"
+  | "openrouter"
+  | "google"
   /**
    * TypeSafe hosts the Jev typed-decision model. It is not a chat provider —
    * `complete()` on the provider entry throws — but registering it here
    * gives the Jev API key the same encrypted-at-rest storage that the chat
    * providers get, and puts the Jev model names in the settings picker.
    */
-  | 'typesafe'
+  | "typesafe";
 
 /**
  * Which pipeline the "Suggest files" button runs.
@@ -380,7 +381,7 @@ export type AiProviderId =
  *                       wants to compare how a general model ranks the
  *                       candidates against Jev's calibrated answers.
  */
-export type SuggestMethod = 'gitnexus-only' | 'gitnexus-jev' | 'gitnexus-llm'
+export type SuggestMethod = "gitnexus-only" | "gitnexus-jev" | "gitnexus-llm";
 
 /**
  * Which half of the app is on screen.
@@ -395,16 +396,16 @@ export type SuggestMethod = 'gitnexus-only' | 'gitnexus-jev' | 'gitnexus-llm'
  * folder contains — the same folder of PDFs is still research mode after a
  * restart.
  */
-export type AppMode = 'coding' | 'research'
+export type AppMode = "coding" | "research";
 
 export interface AiProviderInfo {
-  id: AiProviderId
+  id: AiProviderId;
   /** Human-readable name for the settings UI. */
-  label: string
+  label: string;
   /** Where the user gets an API key. Shown as a link. */
-  keyUrl: string
+  keyUrl: string;
   /** Models the provider exposes. First entry is the default. */
-  models: string[]
+  models: string[];
 }
 
 /**
@@ -414,132 +415,132 @@ export interface AiProviderInfo {
  * goes through the main process.
  */
 export interface AiSettings {
-  provider: AiProviderId | null
+  provider: AiProviderId | null;
   /** Chosen model per provider. Missing entry means "use the provider default". */
-  modelByProvider: Partial<Record<AiProviderId, string>>
+  modelByProvider: Partial<Record<AiProviderId, string>>;
   /** True when a key has been saved for this provider. */
-  hasApiKey: Partial<Record<AiProviderId, boolean>>
+  hasApiKey: Partial<Record<AiProviderId, boolean>>;
   /**
    * Which file-suggestion pipeline the "Suggest files" button runs.
    */
-  suggestMethod: SuggestMethod
+  suggestMethod: SuggestMethod;
   /**
    * Which web chat site the "Send to web chat" button targets. The site is
    * driven through its own web UI in a dedicated window — no API key, no
    * per-token billing.
    */
-  webChatTarget: WebChatTargetId
+  webChatTarget: WebChatTargetId;
   /** Coding mode or research mode — see `AppMode`. */
-  mode: AppMode
+  mode: AppMode;
   /**
    * When true, applies Stage-1 HyDE AI query expansion to all file suggestion
    * methods (including gitnexus-only and gitnexus-jev) to boost recall on vague prompts.
    */
-  enableHydeQuery: boolean
+  enableHydeQuery: boolean;
   /** Provider used for HyDE query expansion. Defaults to 'deepseek'. */
-  hydeProvider: AiProviderId
+  hydeProvider: AiProviderId;
   /** Model used for HyDE query expansion. Defaults to 'deepseek-flash'. */
-  hydeModel: string
+  hydeModel: string;
 }
 
 export interface AiSettingsSaveRequest {
-  provider?: AiProviderId | null
+  provider?: AiProviderId | null;
   /** Set or replace the model for one provider. */
-  model?: { provider: AiProviderId; model: string }
+  model?: { provider: AiProviderId; model: string };
   /** Set or replace the API key for one provider. Empty string clears it. */
-  apiKey?: { provider: AiProviderId; key: string }
+  apiKey?: { provider: AiProviderId; key: string };
   /** Switch the file-suggestion pipeline. */
-  suggestMethod?: SuggestMethod
+  suggestMethod?: SuggestMethod;
   /** Switch the web chat target used by "Send to web chat". */
-  webChatTarget?: WebChatTargetId
+  webChatTarget?: WebChatTargetId;
   /** Switch between coding mode and research mode. */
-  mode?: AppMode
+  mode?: AppMode;
   /** Enable or disable HyDE AI query expansion across suggestion methods. */
-  enableHydeQuery?: boolean
+  enableHydeQuery?: boolean;
   /** Update HyDE provider. */
-  hydeProvider?: AiProviderId
+  hydeProvider?: AiProviderId;
   /** Update HyDE model. */
-  hydeModel?: string
+  hydeModel?: string;
 }
 
 export interface AiSuggestRequest {
-  projectRoot: string
+  projectRoot: string;
   /** Every file path in the scanned tree — the AI may only pick from these. */
-  filePaths: string[]
+  filePaths: string[];
   /** The user's "Additional instructions" text — the feature request. */
-  instruction: string
+  instruction: string;
   /** When true, bypasses the LLM and only computes the codebase map tokens. */
-  dryRun?: boolean
+  dryRun?: boolean;
 }
 
 export interface AiSuggestion {
   /** Validated paths the AI picked, in the order it returned them. */
-  paths: string[]
+  paths: string[];
   /** Brief explanation of why each file was selected, keyed by path. */
-  purposes: Record<string, string>
-  provider: AiProviderId
-  model: string
+  purposes: Record<string, string>;
+  provider: AiProviderId;
+  model: string;
   /** Approximate tokens in the skeleton map that was sent. */
-  mapTokens: number
+  mapTokens: number;
   /** Approximate tokens in the AI response. */
-  outputTokens: number
+  outputTokens: number;
   /** Wall-clock duration of the API call, milliseconds. */
-  durationMs: number
+  durationMs: number;
   /**
    * Paths the AI returned that do not exist in the scanned tree. Surfaced so
    * the UI can warn the user that the model hallucinated; never applied.
    */
-  hallucinated: string[]
+  hallucinated: string[];
   /** Which pipeline produced this suggestion. */
-  method?: SuggestMethod
+  method?: SuggestMethod;
   /**
    * Tokens consumed by the stage-1 keyword expansion call. Only present for
    * the `gitnexus` method, which is the only one with a stage 1.
    */
-  stage1Tokens?: number
+  stage1Tokens?: number;
   /**
    * How many candidates survived hybrid search + reranking and were handed
    * to the stage-2 ranking call. Only present for the `gitnexus` method.
    */
-  candidateCount?: number
+  candidateCount?: number;
   /**
    * True when the GitNexus method was selected but the `gitnexus` CLI was
    * not found on PATH. The pipeline degrades to BM25-only search in that
    * case; the flag lets the UI say so instead of silently producing weaker
    * results.
    */
-  gitnexusMissing?: boolean
+  gitnexusMissing?: boolean;
 
   /**
    * Per-file Jev relevance score (0–3) keyed by path. Only present for the
    * `gitnexus-jev` method.
    */
-  jevScores?: Record<string, number>
+  jevScores?: Record<string, number>;
   /**
    * Per-file Jev confidence (0–1) keyed by path. Present for the
    * `gitnexus-jev` method. This is the calibrated probability Jev reports
    * for its own answer, and it is what the routing thresholds read.
    */
-  jevConfidence?: Record<string, number>
+  jevConfidence?: Record<string, number>;
   /**
    * Paths Jev scored 3 with high confidence. These are the entries the user
    * sees pre-selected in the tree.
    */
-  jevIncluded?: string[]
+  jevIncluded?: string[];
   /**
    * Paths Jev scored 2. Surfaced for human review rather than selected by
    * default — the "flag for review" tier of the routing rule.
    */
-  jevFlagged?: string[]
+  jevFlagged?: string[];
   /**
    * Paths Jev scored 0 or 1. Dropped from the suggestion entirely; kept in
    * the result so the UI can report how many were filtered out.
    */
-  jevDropped?: string[]
+  jevDropped?: string[];
   /** Number of Jev API calls made. Only present for `gitnexus-jev`. */
-  jevBatchCount?: number
+  jevBatchCount?: number;
   /** Input tokens billed by Jev. Only present for `gitnexus-jev`. */
-  jevTokens?: number
+  jevTokens?: number;
 }
 
 /* ------------------------------------------------------------------------ *
@@ -556,32 +557,32 @@ export interface AiSuggestion {
  * is that it depends on each site's DOM, which changes without notice.
  */
 export type WebChatTargetId =
-  | 'deepseek'
-  | 'chatgpt'
-  | 'claude'
-  | 'gemini'
-  | 'kimi'
-  | 'qwen'
+  | "deepseek"
+  | "chatgpt"
+  | "claude"
+  | "gemini"
+  | "kimi"
+  | "qwen";
 
 /** Display metadata for the web chat target picker in Settings. */
 export interface WebChatTargetInfo {
-  id: WebChatTargetId
-  label: string
+  id: WebChatTargetId;
+  label: string;
   /** The site's landing URL, shown as a hint in Settings. */
-  url: string
+  url: string;
 }
 
 export interface WebChatSendRequest {
-  target: WebChatTargetId
-  prompt: string
+  target: WebChatTargetId;
+  prompt: string;
 }
 
 export interface WebChatSendResult {
-  ok: boolean
+  ok: boolean;
   /** The scraped assistant text. Present when `ok` is true. */
-  text?: string
+  text?: string;
   /** User-readable failure reason. Present when `ok` is false. */
-  error?: string
+  error?: string;
 }
 
 /**
@@ -598,7 +599,12 @@ export interface WebChatSendResult {
  *                 on some models. Not the same as `idle`; the reply is
  *                 incomplete and only a click in the window can resume it.
  */
-export type WebChatStatus = 'idle' | 'working' | 'paused'
+export type WebChatStatus = "idle" | "working" | "paused";
+
+export interface WebChatResponsePushedPayload {
+  target: WebChatTargetId;
+  text: string;
+}
 
 /* ------------------------------------------------------------------------ *
  * Research mode
@@ -616,7 +622,7 @@ export type WebChatStatus = 'idle' | 'working' | 'paused'
  *                     Costs a provider call; a paper with 30 figures is a
  *                     few cents on DeepSeek.
  */
-export type ConversionMode = 'text' | 'text-images'
+export type ConversionMode = "text" | "text-images";
 
 /**
  * Where a document sits in the conversion pipeline.
@@ -629,56 +635,56 @@ export type ConversionMode = 'text' | 'text-images'
  *                    launch instead of the document silently reverting to
  *                    `ready`.
  */
-export type DocumentStatus = 'ready' | 'converted' | 'failed'
+export type DocumentStatus = "ready" | "converted" | "failed";
 
 export interface DocumentEntry {
   /** Path relative to `docs/`, POSIX separators. */
-  path: string
+  path: string;
   /** Flat directory name under `converted/` for this document. */
-  slug: string
-  sizeBytes: number
-  status: DocumentStatus
+  slug: string;
+  sizeBytes: number;
+  status: DocumentStatus;
   /** Present once a conversion has run. */
-  mode?: ConversionMode
-  convertedAt?: number
+  mode?: ConversionMode;
+  convertedAt?: number;
   /**
    * True when the vision pass completed for this document. This flag — not a
    * UI checkbox — is what stops a second analysis run: the recorded provider
    * and descriptions are already in `meta.json`.
    */
-  imageAnalyzed?: boolean
+  imageAnalyzed?: boolean;
   /** Provider used for the vision pass, recorded so re-runs stay consistent. */
-  visionProvider?: AiProviderId
+  visionProvider?: AiProviderId;
   /** Chunks this document contributed to the last index build. */
-  chunkCount?: number
+  chunkCount?: number;
   /** Failure reason from the last attempt. Present when status is `failed`. */
-  error?: string
+  error?: string;
   /** True when the converted markdown is on disk (regardless of staleness). */
-  convertedExists: boolean
+  convertedExists: boolean;
 }
 
 /** State of the retrieval index, read from `.index/meta.json`. */
 export interface IndexStatus {
-  built: boolean
-  documentCount: number
-  chunkCount: number
-  dimensions: number
+  built: boolean;
+  documentCount: number;
+  chunkCount: number;
+  dimensions: number;
   /** Embedding model the vectors were produced with. */
-  model: string | null
-  builtAt: number | null
+  model: string | null;
+  builtAt: number | null;
 }
 
 export interface ResearchScanResult {
   /** True when `<project_root>/docs` exists. */
-  docsDirExists: boolean
+  docsDirExists: boolean;
   /**
    * Where the documents were read from. `docs` is the intended layout; `root`
    * is the fallback used when there is no `docs/` folder, so that opening a
    * folder full of PDFs does not report an empty project.
    */
-  sourceDir: 'docs' | 'root'
-  documents: DocumentEntry[]
-  index: IndexStatus
+  sourceDir: "docs" | "root";
+  documents: DocumentEntry[];
+  index: IndexStatus;
 }
 
 /**
@@ -700,62 +706,62 @@ export interface ResearchScanResult {
  *                 and is written from there (see `ResearchPromptMode`
  *                 `rewrite`).
  */
-export type ExtractionEngine = 'auto' | 'fast' | 'webchat'
+export type ExtractionEngine = "auto" | "fast" | "webchat";
 
 export interface ConvertRequest {
-  projectRoot: string
+  projectRoot: string;
   /** `docs/`-relative paths to convert. Empty means "every document". */
-  docPaths: string[]
-  mode: ConversionMode
+  docPaths: string[];
+  mode: ConversionMode;
   /** Extractor to run. Defaults to `auto`. */
-  engine?: ExtractionEngine
+  engine?: ExtractionEngine;
   /** Vision provider for `text-images`. Ignored for `text`. */
-  visionProvider?: AiProviderId
+  visionProvider?: AiProviderId;
 }
 
 /** One progress tick per stage per document. */
 export interface ConvertProgress {
-  path: string
+  path: string;
   /** 1-based position of this document in the batch. */
-  index: number
-  total: number
+  index: number;
+  total: number;
   /**
    * `chatting` is the `webchat` engine's long step: the document is attached
    * to a chat site and the reply is awaited, which takes as long as the model
    * takes.
    */
-  stage: 'extracting' | 'images' | 'saving' | 'chatting'
-  message: string
+  stage: "extracting" | "images" | "saving" | "chatting";
+  message: string;
 }
 
 export interface ConvertResult {
-  documents: DocumentEntry[]
+  documents: DocumentEntry[];
   /**
    * Documents that failed, with the reason. A failed document is reported
    * here and recorded in the state file — it is never dropped from the list.
    */
-  failed: { path: string; error: string }[]
+  failed: { path: string; error: string }[];
   /** True when the user cancelled before the batch finished. */
-  cancelled: boolean
+  cancelled: boolean;
 }
 
 export interface IndexBuildRequest {
-  projectRoot: string
+  projectRoot: string;
   /** Documents to index. Empty means "every converted document". */
-  docPaths: string[]
+  docPaths: string[];
 }
 
 export interface IndexBuildProgress {
-  stage: 'chunking' | 'embedding' | 'saving'
-  done: number
-  total: number
-  message: string
+  stage: "chunking" | "embedding" | "saving";
+  done: number;
+  total: number;
+  message: string;
 }
 
 export interface IndexBuildResult {
-  index: IndexStatus
+  index: IndexStatus;
   /** Documents skipped because they have no converted markdown yet. */
-  skipped: string[]
+  skipped: string[];
 }
 
 /**
@@ -767,42 +773,42 @@ export interface IndexBuildResult {
  *              source document, then the top-ranked excerpts with a citation
  *              header on each.
  */
-export type ResearchPromptMode = 'full' | 'rag'
+export type ResearchPromptMode = "full" | "rag";
 
 export interface ResearchPromptRequest {
-  projectRoot: string
-  mode: ResearchPromptMode
+  projectRoot: string;
+  mode: ResearchPromptMode;
   /** Documents to include. Empty means "every converted document". */
-  docPaths: string[]
+  docPaths: string[];
   /** Required for `rag`. */
-  question?: string
+  question?: string;
   /** Excerpts kept after retrieval. Defaults to 8. */
-  topK?: number
+  topK?: number;
   /**
    * Ask the chat provider to re-rank the retrieved candidates. Costs one
    * extra call and helps when the embedding model returns near-ties.
    */
-  rerank?: boolean
+  rerank?: boolean;
 }
 
 export interface ResearchCitation {
-  document: string
-  heading: string
+  document: string;
+  heading: string;
 }
 
 export interface ResearchPromptResult {
-  prompt: string
-  tokenCount: number
-  documentCount: number
+  prompt: string;
+  tokenCount: number;
+  documentCount: number;
   /** Excerpts included. Zero for `full`. */
-  chunkCount: number
+  chunkCount: number;
   /** Titles of the documents that went in, in prompt order. */
-  documents: string[]
-  citations: ResearchCitation[]
+  documents: string[];
+  citations: ResearchCitation[];
   /** Documents that could not be read; reported, never silently dropped. */
-  unreadable: string[]
+  unreadable: string[];
 }
 
 export interface ResearchCancelRequest {
-  projectRoot: string
+  projectRoot: string;
 }
