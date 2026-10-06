@@ -1,0 +1,257 @@
+import path from 'node:path'
+import { countTokens } from 'gpt-tokenizer'
+import type { PromptBuildResult } from '@shared/types'
+import { isSensitiveFileName, readTextFile } from '../core/fs-service'
+
+/** Fence language derived from the file extension; falls back to `text`. */
+const EXTENSION_LANGUAGES: Record<string, string> = {
+  '.ts': 'typescript',
+  '.tsx': 'tsx',
+  '.js': 'javascript',
+  '.jsx': 'jsx',
+  '.mjs': 'javascript',
+  '.cjs': 'javascript',
+  '.py': 'python',
+  '.rb': 'ruby',
+  '.go': 'go',
+  '.rs': 'rust',
+  '.java': 'java',
+  '.kt': 'kotlin',
+  '.swift': 'swift',
+  '.php': 'php',
+  '.cs': 'csharp',
+  '.c': 'c',
+  '.h': 'c',
+  '.cpp': 'cpp',
+  '.hpp': 'cpp',
+  '.css': 'css',
+  '.scss': 'scss',
+  '.html': 'html',
+  '.vue': 'vue',
+  '.svelte': 'svelte',
+  '.json': 'json',
+  '.yml': 'yaml',
+  '.yaml': 'yaml',
+  '.toml': 'toml',
+  '.md': 'markdown',
+  '.sh': 'bash',
+  '.sql': 'sql',
+  '.xml': 'xml',
+  '.hbs': 'handlebars',
+}
+
+export function languageForPath(filePath: string): string {
+  return EXTENSION_LANGUAGES[path.extname(filePath).toLowerCase()] ?? 'text'
+}
+
+interface TreeNode {
+  name: string
+  children: Map<string, TreeNode>
+}
+
+/**
+ * Render a directory listing for the selected file paths only.
+ * Paths are POSIX-relative and pre-sorted by the caller's file tree.
+ */
+export function buildTreeLines(filePaths: string[]): string {
+  const root: TreeNode = { name: '', children: new Map() }
+
+  for (const filePath of [...filePaths].sort()) {
+    const segments = filePath.split('/').filter(Boolean)
+    let node = root
+    for (const segment of segments) {
+      let child = node.children.get(segment)
+      if (!child) {
+        child = { name: segment, children: new Map() }
+        node.children.set(segment, child)
+      }
+      node = child
+    }
+  }
+
+  const lines: string[] = []
+  const render = (node: TreeNode, prefix: string): void => {
+    const entries = [...node.children.values()]
+    entries.forEach((child, index) => {
+      const last = index === entries.length - 1
+      lines.push(`${prefix}${last ? '└── ' : '├── '}${child.name}`)
+      render(child, `${prefix}${last ? '    ' : '│   '}`)
+    })
+  }
+  render(root, '')
+  return lines.join('\n')
+}
+
+const OUTPUT_INSTRUCTIONS = `## Output Instructions
+
+Reply using exactly the three delimited sections below, in this order, and nothing else:
+
+
+===Files===
+<one entry per file that needs to change — see "File entries" below>
+======
+===Explanation===
+<plain prose explaining what changed and why, or the single word None>
+======
+===Debug===
+<commands to verify or reproduce the change, or the single word None>
+======
+
+
+Each section opens with a line reading \`===<Name>===\` (using the exact case shown: \`Files\`, \`Explanation\`, \`Debug\`) and closes with a line reading \`======\` on its own. All three sections — and all three closing \`======\` lines — are mandatory, even when a section's body is \`None\`. Do not reorder the sections, and do not write anything before the opening \`===Files===\` line or after the final \`======\` line.
+
+A section terminator is exactly six \`=\` characters. The SEARCH/REPLACE separator inside a file entry is seven \`=======\`. The two are distinct lines and must not be confused.
+
+### File entries (inside the \`===Files===\` section)
+
+One entry per file that needs to change. **Prefer the full-file markdown form.** Emit each file as a \`File: <path>\` header followed by a fenced code block containing that file's complete contents, with the language tag shown in the context above.
+
+Change only what the input instruction describes. Do not refactor, rename, reorganize, or "improve" code that is not part of the change. A diff line the reviewer cannot trace back to a specific part of the input instruction is out of scope — leave it alone.
+
+#### Preferred form — full file in a markdown fence
+
+- A line reading \`File: <path>\` holding the project-relative path.
+- A fenced code block containing that file's **complete** contents.
+- Use the same language tag as shown in the context above.
+
+This is the default. Use it for new files, for rewrites, and for any file where the change touches more than a handful of lines. The full-file form is unambiguous — the applier writes the fence body to disk verbatim — and it does not depend on the model having reproduced an exact substring.
+
+#### Fallback form — SEARCH/REPLACE for surgical edits
+
+Use the patch form **only** when the change is genuinely small relative to the file — a one-line rename, a constant change, a single import — and the exact surrounding text is visible verbatim in the context above. For anything larger, fall back to the full-file form.
+
+- A line reading \`File: <path>\` holding the project-relative path.
+- One or more SEARCH/REPLACE pairs, in the form:
+
+  \`\`\`
+  <<<<<<< SEARCH
+  (exact substring copied from the file as shown above)
+  =======
+  (the text that should replace it)
+  >>>>>>> REPLACE
+  \`\`\`
+
+#### Delete form — a \`Delete: <path>\` line
+
+To remove a file, emit a line reading \`Delete: <path>\` holding the project-relative path. No fenced code block follows a delete directive — the line itself is the whole instruction.
+
+\`\`\`
+Delete: src/legacy/old-helper.ts
+\`\`\`
+
+The \`Delete:\` line must sit in the prose between file entries, **not inside a fenced code block**. A \`Delete:\` line inside a code body is treated as ordinary file content and is never executed as a directive, so a migration script or ORM model that happens to contain the text \`Delete: something\` is safe.
+
+A delete directive may appear anywhere among the \`File:\` entries, in any order — deletes and edits to other files can be freely interleaved inside the \`===Files===\` section. A \`===Files===\` section that contains only delete directives is valid.
+
+Paths use the same project-relative POSIX form as \`File:\` headers (\`src/app.ts\`, not \`./src/app.ts\` and not an absolute path). A path that does not exist on disk is a no-op reported as \`not-found\`; it is not an error.
+
+#### Rules for both forms
+
+- A file that does not yet exist **must** be emitted as a full fenced block, never a patch.
+- **Prefer the full-file form whenever there is any doubt.** A full file that is slightly larger than necessary is always correct; a patch that fails to match is always broken.
+- The SEARCH block must be an **exact substring** of the file as shown in the context above, including all whitespace, indentation, and line endings. Do not re-indent, re-wrap, reorder, or "clean up" the quoted region. Copy it verbatim.
+- The SEARCH block must be unambiguous — quote enough surrounding context that the substring appears exactly once in the file.
+- You may emit multiple SEARCH/REPLACE pairs under a single \`File:\` header; they are applied in order.
+- You may emit any number of \`Delete: <path>\` lines alongside \`File:\` entries.
+- Do not add prose between file entries.
+- If a file is unchanged, do not include it.
+
+### The \`===Explanation===\` section
+
+After the closing \`======\` of the Files section, write a line reading \`===Explanation===\`, then the explanation, then a line reading \`======\`.
+
+The body is plain prose, briefly covering:
+
+- What was added, removed, or changed in each file.
+- Why the change was made (the reasoning, not a restatement of the diff).
+
+If there is nothing to explain, the body is the single word \`None\`.
+
+### The \`===Debug===\` section
+
+After the closing \`======\` of the Explanation section, write a line reading \`===Debug===\`, then the debug content, then the final closing \`======\`.
+
+If the user needs to run commands to verify or reproduce the change, list them as fenced code blocks with the appropriate language tag (e.g. \`bash\`, \`powershell\`, \`sh\`). Each command block must be prefixed by a one-line description of what it does.
+
+If there are no debug commands, the body is the single word \`None\`.
+
+### Hard constraints
+
+- No conversational text before the opening \`===Files===\` line, between sections, or after the final \`======\` line.
+- All three section headers — \`===Files===\`, \`===Explanation===\`, \`===Debug===\` — and all three closing \`======\` lines are **mandatory**.
+- Never put a \`File:\` line inside the Explanation or Debug section.
+- A \`Delete:\` directive is a line of prose, never a fenced block, and never appears inside the Explanation or Debug section.
+`
+
+export interface PromptFile {
+  path: string
+  language: string
+  content: string
+}
+
+export function renderPrompt(tree: string, files: PromptFile[]): string {
+  const renderedFiles =
+    files.length > 0
+      ? files
+          .map(
+            (file) =>
+              `File: ${file.path}\n\n\`\`\`${file.language}\n${file.content}\n\`\`\`\n\n`,
+          )
+          .join('') + '\n'
+      : '\n'
+
+  return `# Codebase Context
+
+## Project Structure
+
+\`\`\`
+${tree}
+\`\`\`
+
+## Files
+
+${renderedFiles}
+${OUTPUT_INSTRUCTIONS}`
+}
+
+/**
+ * Read the selected files and assemble the base prompt (files + the output
+ * contract). The user's additional instructions are *not* baked in here — they
+ * are inserted in the renderer at display/copy/save time so an edit to that
+ * box takes effect without a rebuild.
+ */
+export async function buildPrompt(
+  projectRoot: string,
+  filePaths: string[],
+): Promise<PromptBuildResult> {
+  const files: PromptFile[] = []
+  const unreadable: string[] = []
+  const sensitiveFiles: string[] = []
+
+  for (const filePath of filePaths) {
+    try {
+      const content = await readTextFile(projectRoot, filePath)
+      files.push({ path: filePath, language: languageForPath(filePath), content })
+      // Report but never drop: the user asked for this file, so the prompt
+      // includes it. The warning is the safety net, not silent exclusion.
+      if (isSensitiveFileName(path.basename(filePath))) {
+        sensitiveFiles.push(filePath)
+      }
+    } catch {
+      unreadable.push(filePath)
+    }
+  }
+
+  const prompt = renderPrompt(
+    buildTreeLines(files.map((file) => file.path)),
+    files,
+  )
+
+  return {
+    prompt,
+    tokenCount: countTokens(prompt),
+    fileCount: files.length,
+    unreadable,
+    sensitiveFiles,
+  }
+}

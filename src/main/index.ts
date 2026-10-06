@@ -1,6 +1,6 @@
 import path from "node:path";
 import { app, BrowserWindow, shell } from "electron";
-import { registerIpcHandlers } from "./ipc";
+import { registerIpcHandlers } from "./ipc/register";
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
