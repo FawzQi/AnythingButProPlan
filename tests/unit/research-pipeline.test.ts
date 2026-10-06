@@ -64,14 +64,12 @@ describe("scanDocuments", () => {
     expect(byPath.get("archive.bin")?.error).toMatch(/Unsupported format/);
   });
 
-  it("keeps a chat-only format convertible rather than marking it failed", async () => {
-    // A .docx has a working engine (webchat). Painting it red would tell the
-    // user their document is unsupported when it is not.
+  it("marks unsupported formats as failed", async () => {
     await fs.writeFile(path.join(root, "docs", "report.docx"), "fake");
     const scan = await scanDocuments(root);
     const entry = scan.documents.find((d) => d.path === "report.docx");
-    expect(entry?.status).toBe("ready");
-    expect(entry?.error).toMatch(/webchat extractor/);
+    expect(entry?.status).toBe("failed");
+    expect(entry?.error).toMatch(/Unsupported format/);
   });
 
   it("reports a missing docs/ directory rather than an empty list", async () => {
@@ -127,7 +125,6 @@ describe("convertDocuments", () => {
       docPaths: [],
       mode: "text",
       engine: "auto",
-      webChatTarget: "deepseek",
       onProgress: (entry) => progress.push(`${entry.path}:${entry.stage}`),
     });
 
@@ -169,7 +166,6 @@ describe("conversion engine guards", () => {
       docPaths: [],
       mode: "text-images",
       engine: "fast",
-      webChatTarget: "deepseek",
       onProgress: () => {},
     });
 
@@ -202,7 +198,6 @@ describe("conversion engine guards", () => {
       docPaths: [],
       mode: "text",
       engine: "auto",
-      webChatTarget: "deepseek",
       onProgress: () => {},
     });
 
@@ -256,7 +251,6 @@ describe("buildResearchPrompt in full mode", () => {
       docPaths: [],
       mode: "text",
       engine: "auto",
-      webChatTarget: "deepseek",
       onProgress: () => {},
     });
 
@@ -296,7 +290,6 @@ describe("buildResearchPrompt in full mode", () => {
       docPaths: [],
       mode: "text",
       engine: "auto",
-      webChatTarget: "deepseek",
       onProgress: () => {},
     });
 
@@ -317,7 +310,6 @@ describe("buildResearchPrompt in full mode", () => {
       docPaths: [],
       mode: "text",
       engine: "auto",
-      webChatTarget: "deepseek",
       onProgress: () => {},
     });
     await expect(

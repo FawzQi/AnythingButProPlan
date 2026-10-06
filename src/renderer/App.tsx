@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { ReactElement } from "react";
-import type { AppMode, WebChatStatus } from "@shared/types";
+import type { AppMode } from "@shared/types";
 import { useAppStore } from "./stores/app-store";
 import { subscribeResearchProgress } from "./stores/research-store";
 import { DocumentTree } from "./components/DocumentTree";
@@ -24,64 +24,6 @@ const MODES: { id: AppMode; label: string; title: string }[] = [
   },
 ];
 
-/**
- * Status dot + Open chat button, rendered beside the mode toggle.
- *
- * Moved here from the Settings tab so the state of the currently-selected
- * chat site is always visible. The paused state in particular needs to be
- * seen at a glance: the only way to resume is to open the window and click
- * the site's Continue button, and the user cannot know that unless the
- * indicator tells them.
- */
-function WebChatIndicator({
-  status,
-  targetLabel,
-  onOpen,
-}: {
-  status: WebChatStatus;
-  targetLabel: string;
-  onOpen: () => void;
-}): ReactElement {
-  const dotClass =
-    status === "working"
-      ? "bg-sky-400 animate-pulse"
-      : status === "paused"
-        ? "bg-amber-400"
-        : "bg-slate-600";
-  const stateLabel =
-    status === "working"
-      ? "working"
-      : status === "paused"
-        ? "paused — press Continue in the window"
-        : "idle";
-  return (
-    <div className="flex items-center gap-1.5">
-      <span
-        className={`inline-block size-2 shrink-0 rounded-full ${dotClass}`}
-        aria-hidden="true"
-        title={`${targetLabel}: ${stateLabel}`}
-      />
-      {status !== "idle" && (
-        <span
-          className={`text-[11px] font-medium ${
-            status === "paused" ? "text-amber-400" : "text-sky-400"
-          }`}
-        >
-          {status === "paused" ? "paused" : "working…"}
-        </span>
-      )}
-      <button
-        type="button"
-        onClick={onOpen}
-        className="rounded border border-[#2c3038] px-2 py-0.5 text-xs font-medium text-slate-300 transition hover:border-slate-500 hover:text-slate-100"
-        title={`Open the ${targetLabel} window — status: ${stateLabel}`}
-      >
-        Open chat
-      </button>
-    </div>
-  );
-}
-
 export default function App(): ReactElement {
   const notice = useAppStore((state) => state.notice);
   const error = useAppStore((state) => state.error);
@@ -89,18 +31,6 @@ export default function App(): ReactElement {
   const mode = useAppStore((state) => state.aiSettings?.mode ?? "coding");
   const loadAiSettings = useAppStore((state) => state.loadAiSettings);
   const saveAiSettings = useAppStore((state) => state.saveAiSettings);
-  const webChatTarget = useAppStore(
-    (state) => state.aiSettings?.webChatTarget ?? "deepseek",
-  );
-  const webChatTargetLabel = useAppStore(
-    (state) =>
-      state.webChatTargets.find((t) => t.id === state.aiSettings?.webChatTarget)
-        ?.label ?? "chat",
-  );
-  const webChatStatus = useAppStore((state) => state.webChatStatus);
-  const openWebChat = useAppStore((state) => state.openWebChat);
-  const setWebChatStatus = useAppStore((state) => state.setWebChatStatus);
-
   // Left panel: the divider sits to its right, so dragging right grows it.
   const fileTree = useResizableWidth(420, { min: 180, max: 640, sign: 1 });
   // Right panel: the divider sits to its left, so dragging right shrinks it.
@@ -113,36 +43,6 @@ export default function App(): ReactElement {
   useEffect(() => {
     void loadAiSettings();
   }, [loadAiSettings]);
-
-  // Web chat status is pushed from the main process whenever a send starts,
-  // pauses, resumes, or ends. The initial value is fetched once on mount so
-  // the indicator is accurate before the first send of the session.
-  useEffect(() => {
-    void window.AnythingButProPlan.webChatGetStatus().then(setWebChatStatus);
-    const off = window.AnythingButProPlan.onWebChatStatusChanged(
-      setWebChatStatus,
-    );
-    return off;
-  }, [setWebChatStatus]);
-
-  useEffect(() => {
-    const off = window.AnythingButProPlan.onWebChatResponsePushed(
-      async ({ target, text }) => {
-        if (!text || text.trim() === "") return;
-        const current = useAppStore.getState().rawResponse;
-        if (text === current) return;
-        await useAppStore.getState().setResponse(text);
-        const targetLabel =
-          useAppStore
-            .getState()
-            .webChatTargets.find((t) => t.id === target)?.label ?? "web chat";
-        useAppStore
-          .getState()
-          .setNotice(`Response auto-copied from ${targetLabel}.`);
-      },
-    );
-    return off;
-  }, []);
 
   // Conversion and index progress arrive as main-process events. Subscribed
   // here, above the mode branch, so a conversion started in research mode
@@ -192,17 +92,6 @@ export default function App(): ReactElement {
             </button>
           ))}
         </div>
-
-        {/* Web chat controls: a live status dot for the selected chat site
-            and the button that opens or brings its window to the front.
-            Moved out of Settings so it is reachable without switching tabs —
-            the paused state needs to be visible while the user is looking at
-            the prompt or the response panel, not hidden behind a tab. */}
-        <WebChatIndicator
-          status={webChatStatus[webChatTarget] ?? "idle"}
-          targetLabel={webChatTargetLabel}
-          onOpen={() => void openWebChat()}
-        />
         <div className="ml-auto flex items-center gap-2">
           {notice ? (
             <span className="text-xs text-emerald-400">{notice}</span>

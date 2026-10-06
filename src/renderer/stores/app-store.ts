@@ -12,9 +12,6 @@ import type {
   ParsedFile,
   ParseResult,
   RecentFolder,
-  WebChatStatus,
-  WebChatTargetId,
-  WebChatTargetInfo,
 } from "@shared/types";
 import {
   collectSelectedPaths,
@@ -101,8 +98,6 @@ interface AppState {
    * stored per provider (the key itself never reaches the renderer).
    */
   aiProviders: AiProviderInfo[];
-  /** Catalogue of web chat sites the "Send to web chat" button can drive. */
-  webChatTargets: WebChatTargetInfo[];
   aiSettings: AiSettings | null;
   aiSettingsLoading: boolean;
   /**
@@ -120,23 +115,6 @@ interface AppState {
   /** Token count of the generated codebase map/skeleton used for suggest files. */
   mapTokenCount: number | null;
 
-  /**
-   * True while a web chat send is in flight. The whole round-trip — typing,
-   * submitting, waiting for the reply to finish streaming, scraping — runs
-   * inside the main process, so the renderer only sees the two edges.
-   */
-  webChatSending: boolean;
-  scrapingWebChat: boolean;
-
-  /**
-   * Per-target status of the web chat windows, pushed from the main process
-   * whenever it changes. `idle` means no send is in flight for that site;
-   * `working` means the site is generating; `paused` means generation
-   * stopped and the site is waiting for the user to press a "Continue"
-   * button. Rendered next to the Open chat button in the header.
-   */
-  webChatStatus: Record<WebChatTargetId, WebChatStatus>;
-
   notice: string | null;
   error: string | null;
 
@@ -150,12 +128,6 @@ interface AppState {
   loadAiModels: (provider: AiProviderId) => Promise<void>;
   suggestFiles: () => Promise<void>;
   calculateMapTokens: () => Promise<void>;
-  sendToWebChat: () => Promise<void>;
-  openWebChat: () => Promise<void>;
-  scrapeWebChatResponse: () => Promise<void>;
-  setWebChatStatus: (
-    statuses: Record<WebChatTargetId, WebChatStatus>,
-  ) => void;
 
   openProject: () => Promise<void>;
   refreshProject: () => Promise<void>;
@@ -252,7 +224,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   gitCommitMessage: "",
 
   aiProviders: [],
-  webChatTargets: [],
   aiSettings: null,
   aiSettingsLoading: false,
   aiModelsByProvider: {},
@@ -260,18 +231,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   aiSuggesting: false,
   aiLastSuggestion: null,
   mapTokenCount: null,
-
-  webChatSending: false,
-  scrapingWebChat: false,
-
-  webChatStatus: {
-    deepseek: "idle",
-    chatgpt: "idle",
-    claude: "idle",
-    gemini: "idle",
-    kimi: "idle",
-    qwen: "idle",
-  },
 
   notice: null,
   error: null,
@@ -358,7 +317,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       const result = await window.AnythingButProPlan.aiGetSettings();
       set({
         aiProviders: result.providers,
-        webChatTargets: result.webChatTargets,
         aiSettings: result.settings,
         aiSettingsLoading: false,
       });
@@ -494,88 +452,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ aiSuggesting: false, error: message(error) });
     }
   },
-
-  sendToWebChat: async () => {
-    const { prompt, customPrompt, aiSettings } = get();
-    // Two valid send shapes:
-    //
-    //   1. A prompt has been generated. The input instruction is inserted
-    //      into it, exactly as Copy and Save do, so the site sees the whole
-    //      request — file bodies plus the output contract plus the ask.
-    //
-    //   2. No prompt exists (never generated, or cleared). The input
-    //      instruction goes on its own. This is the "use the web chat as a
-    //      general assistant" path: the user describes what they want and
-    //      the site answers, with no repo context and no output contract in
-    //      the way. Requiring a built prompt here would force the user to
-    //      select files just to send a one-line question.
-    const text =
-      prompt === ""
-        ? customPrompt.trim()
-        : insertCustomPrompt(prompt, customPrompt);
-    if (text === "") {
-      set({
-        error:
-          "Type an input instruction or generate a prompt before sending to a web chat.",
-      });
-      return;
-    }
-    const target: WebChatTargetId = aiSettings?.webChatTarget ?? "deepseek";
-    try {
-      set({ webChatSending: true, error: null, notice: null });
-      const result = await window.AnythingButProPlan.webChatSend({
-        target,
-        prompt: text,
-      });
-      if (!result.ok) {
-        set({
-          webChatSending: false,
-          error: result.error ?? "The web chat did not return a response.",
-        });
-        return;
-      }
-      set({ webChatSending: false });
-      // The scraped text is fed through the same parser the paste path uses,
-      // so the Response panel behaves identically no matter where the reply
-      // came from. `setResponse` writes `rawResponse`, which the Response
-      // panel's textarea mirrors — the reply appears in the input box.
-      await get().setResponse(result.text ?? "");
-      set({ notice: "Response received from the web chat." });
-    } catch (error) {
-      set({ webChatSending: false, error: message(error) });
-    }
-  },
-
-  openWebChat: async () => {
-    const target = get().aiSettings?.webChatTarget ?? "deepseek";
-    try {
-      await window.AnythingButProPlan.webChatOpen(target);
-    } catch (error) {
-      set({ error: message(error) });
-    }
-  },
-
-  scrapeWebChatResponse: async () => {
-    const target = get().aiSettings?.webChatTarget ?? "deepseek";
-    try {
-      set({ scrapingWebChat: true, error: null });
-      const result = await window.AnythingButProPlan.webChatScrapeResponse(target);
-      if (!result.ok) {
-        set({
-          scrapingWebChat: false,
-          error: result.error ?? "Could not scrape response from web chat.",
-        });
-        return;
-      }
-      set({ scrapingWebChat: false });
-      await get().setResponse(result.text ?? "");
-      set({ notice: `Response scraped from ${target}.` });
-    } catch (error) {
-      set({ scrapingWebChat: false, error: message(error) });
-    }
-  },
-
-  setWebChatStatus: (statuses) => set({ webChatStatus: statuses }),
 
   openProject: async () => {
     try {

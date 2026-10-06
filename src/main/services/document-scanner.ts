@@ -8,7 +8,6 @@ import type {
   IndexStatus,
   ResearchScanResult,
 } from '@shared/types'
-import { isChatConvertible } from '@shared/chat-formats'
 import { resolveWithinRoot, toPosix, writeFileEnsuringDir } from './fs-service'
 
 /**
@@ -303,14 +302,11 @@ export async function scanDocuments(
     }
 
     const supported = isSupportedDocument(relativePath)
-    // Readable only through the chat engine. It is not a failure — it is a
-    // document with one working engine — so it keeps `ready`.
-    const chatOnly = !supported && isChatConvertible(relativePath)
     const convertedExists = await fileExistsQuiet(
       markdownPathFor(projectRoot, slug),
     )
 
-    const status: DocumentStatus = !supported && !chatOnly
+    const status: DocumentStatus = !supported
       ? 'failed'
       : record?.status === 'converted' && convertedExists
         ? 'converted'
@@ -335,9 +331,7 @@ export async function scanDocuments(
       error:
         record?.error ??
         (!supported
-          ? chatOnly
-            ? `Not readable by the local extractors — convert it with the webchat extractor.`
-            : `Unsupported format — only ${[...SUPPORTED_EXTENSIONS].join(', ')} files are converted.`
+          ? `Unsupported format — only ${[...SUPPORTED_EXTENSIONS].join(', ')} files are converted.`
           : undefined),
       convertedExists,
     })

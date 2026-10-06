@@ -58,7 +58,6 @@ describe("mode persistence", () => {
         encryptedKeys: {},
         modelByProvider: {},
         suggestMethod: "gitnexus-llm",
-        webChatTarget: "chatgpt",
       }),
       "utf8",
     );
@@ -66,7 +65,6 @@ describe("mode persistence", () => {
     expect(settings.mode).toBe("coding");
     // The untouched fields survive the migration.
     expect(settings.suggestMethod).toBe("gitnexus-llm");
-    expect(settings.webChatTarget).toBe("chatgpt");
   });
 
   it("falls back to coding on a hand-edited mode value", async () => {
@@ -80,7 +78,7 @@ describe("mode persistence", () => {
 
   it("leaves the mode alone when another field is saved", async () => {
     await saveSettings({ mode: "research" });
-    await saveSettings({ webChatTarget: "gemini" });
+    await saveSettings({ suggestMethod: "gitnexus-jev" });
     expect((await getSettings()).mode).toBe("research");
   });
 

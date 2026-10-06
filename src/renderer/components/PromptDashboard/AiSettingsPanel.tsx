@@ -10,10 +10,6 @@ import { Banner, Button } from "../../lib/ui";
  * through IPC, stored encrypted in `userData`, and never read back into the
  * renderer — the field below is write-only by design.
  *
- * The panel also hosts the "Send to web chat" target picker. That path does
- * not use an API key at all: it drives the site's own web UI in a dedicated
- * Electron window, reusing whatever session the user is signed into.
- *
  * The panel always renders something. A missing component or a silently
  * failing IPC call were both producing a blank tab because the early
  * `return` statements produced no visible output on some paths; every
@@ -21,7 +17,6 @@ import { Banner, Button } from "../../lib/ui";
  */
 export function AiSettingsPanel(): ReactElement {
   const providers = useAppStore((state) => state.aiProviders);
-  const webChatTargets = useAppStore((state) => state.webChatTargets);
   const settings = useAppStore((state) => state.aiSettings);
   const loading = useAppStore((state) => state.aiSettingsLoading);
   const load = useAppStore((state) => state.loadAiSettings);
@@ -65,10 +60,6 @@ export function AiSettingsPanel(): ReactElement {
     ? settings.modelByProvider[selected] ?? activeProvider?.models[0] ?? ""
     : "";
 
-  const activeWebChat = webChatTargets.find(
-    (t) => t.id === settings.webChatTarget,
-  ) ?? null;
-
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-auto p-3">
       <p className="mb-3 max-w-2xl text-xs text-slate-400">
@@ -77,8 +68,7 @@ export function AiSettingsPanel(): ReactElement {
         main process — it never reaches the web view.
         <strong> GitNexus only</strong> runs entirely offline and needs no
         key; <strong>GitNexus + Jev</strong> uses the TypeSafe key and does
-        not contact a chat provider. The <strong>web chat</strong> path below
-        uses neither — it drives the chat site&rsquo;s own UI.
+        not contact a chat provider.
       </p>
 
       {providers.length === 0 ? (
@@ -90,56 +80,6 @@ export function AiSettingsPanel(): ReactElement {
           </Banner>
         </div>
       ) : null}
-
-      <div className="mb-6">
-        <label className="mb-1 block text-xs font-medium text-slate-400">
-          Web chat target
-        </label>
-        <p className="mb-2 max-w-2xl text-[11px] text-slate-500">
-          Where <strong>Send to web chat</strong> on the Prompt tab goes. The
-          app opens the site in a dedicated window, types the prompt into its
-          composer, submits it, and scrapes the reply back into the AI
-          Response panel. No API key and no per-token billing — the site is
-          the model. Sign in once and the session is kept until you close
-          that window. Each site&rsquo;s markup changes on its own schedule;
-          if a send ever fails with &ldquo;could not find the chat
-          input&rdquo;, open the window and finish signing in first.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {webChatTargets.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => void save({ webChatTarget: t.id })}
-              className={`rounded border px-3 py-1.5 text-xs font-medium transition ${
-                settings.webChatTarget === t.id
-                  ? "border-sky-500 bg-sky-950/40 text-sky-100"
-                  : "border-[#2c3038] text-slate-300 hover:border-slate-500"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        {activeWebChat ? (
-          <div className="mt-2">
-            <a
-              href={activeWebChat.url}
-              target="_blank"
-              rel="noreferrer"
-              className="truncate text-[11px] text-slate-500 hover:text-slate-300"
-              title={activeWebChat.url}
-            >
-              {activeWebChat.url}
-            </a>
-            <p className="mt-1 text-[11px] text-slate-500">
-              The chat window is opened from the header — see{" "}
-              <strong>Open chat</strong> next to the Coding / Research
-              toggle.
-            </p>
-          </div>
-        ) : null}
-      </div>
 
       <div className="mb-4">
         <label className="mb-1 block text-xs font-medium text-slate-400">

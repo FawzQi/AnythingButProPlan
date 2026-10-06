@@ -42,10 +42,6 @@ import type {
   PromptBuildRequest,
   PromptBuildResult,
   ScanResult,
-  WebChatSendRequest,
-  WebChatSendResult,
-  WebChatStatus,
-  WebChatTargetId,
   WriteFileRequest,
   WriteFileResult,
 } from "@shared/types";
@@ -96,16 +92,6 @@ import {
   discoverModels,
   listProviders,
 } from "./services/ai-providers";
-import {
-  cancelWebChat,
-  getWebChatStatuses,
-  listWebChatTargets,
-  openWebChat,
-  scrapeWebChatResponse,
-  sendToWebChat,
-  setWebChatResponsePushListener,
-  setWebChatStatusListener,
-} from "./services/web-chat";
 
 /**
  * Vision provider ids arrive from the renderer's picker, so they are checked
@@ -150,24 +136,6 @@ function requireString(value: unknown, label: string): string {
   return value;
 }
 
-const WEB_CHAT_TARGET_IDS: readonly WebChatTargetId[] = [
-  "deepseek",
-  "chatgpt",
-  "claude",
-  "gemini",
-  "kimi",
-  "qwen",
-];
-
-function requireWebChatTarget(value: unknown): WebChatTargetId {
-  if (
-    typeof value !== "string" ||
-    !(WEB_CHAT_TARGET_IDS as readonly string[]).includes(value)
-  ) {
-    throw new Error(`Unknown web chat target: ${String(value)}`);
-  }
-  return value as WebChatTargetId;
-}
 
 /**
  * Launch the platform's terminal emulator in `cwd`. Detached + unref so the
@@ -209,27 +177,6 @@ function openTerminalAt(cwd: string): void {
  * renderer is not a trust boundary, so nothing it sends is taken on faith.
  */
 export function registerIpcHandlers(): void {
-  // Relay every web chat status change to all open renderer windows. The
-  // status is produced inside `web-chat.ts` and only changes on send start,
-  // pause, resume, and end, so pushing to every window is cheap and keeps
-  // the header's indicator live without a polling loop in the renderer.
-  setWebChatStatusListener((statuses) => {
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) {
-        window.webContents.send(IpcChannel.WebChatStatusChanged, statuses);
-      }
-    }
-  });
-
-  // Relay auto-copied web chat responses to all open renderer windows.
-  setWebChatResponsePushListener((payload) => {
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) {
-        window.webContents.send(IpcChannel.WebChatResponsePushed, payload);
-      }
-    }
-  });
-
   ipcMain.handle(
     IpcChannel.PickDirectory,
     async (event): Promise<string | null> => {
@@ -335,12 +282,10 @@ export function registerIpcHandlers(): void {
     async (): Promise<{
       settings: AiSettings;
       providers: ReturnType<typeof listProviders>;
-      webChatTargets: ReturnType<typeof listWebChatTargets>;
     }> => {
       return {
         settings: await getSettings(),
         providers: listProviders(),
-        webChatTargets: listWebChatTargets(),
       };
     },
   );
@@ -365,7 +310,6 @@ export function registerIpcHandlers(): void {
         model: typed?.model,
         apiKey: typed?.apiKey,
         suggestMethod: typed?.suggestMethod,
-        webChatTarget: typed?.webChatTarget,
         mode: typed?.mode,
         enableHydeQuery: typed?.enableHydeQuery,
         hydeProvider: typed?.hydeProvider,
@@ -615,45 +559,6 @@ export function registerIpcHandlers(): void {
   );
 
   /* ---------------------------------------------------------------------- *
-   * Web chat bridge
-   * ---------------------------------------------------------------------- */
-
-  ipcMain.handle(
-    IpcChannel.WebChatSend,
-    async (_event, request: unknown): Promise<WebChatSendResult> => {
-      const typed = request as WebChatSendRequest;
-      const target = requireWebChatTarget(typed?.target);
-      const prompt = requireString(typed?.prompt, "prompt");
-      return sendToWebChat(target, prompt);
-    },
-  );
-
-  ipcMain.handle(
-    IpcChannel.WebChatOpen,
-    async (_event, target: unknown): Promise<void> => {
-      await openWebChat(requireWebChatTarget(target));
-    },
-  );
-
-  ipcMain.handle(IpcChannel.WebChatCancel, async (): Promise<void> => {
-    cancelWebChat();
-  });
-
-  ipcMain.handle(
-    IpcChannel.WebChatStatusGet,
-    async (): Promise<Record<WebChatTargetId, WebChatStatus>> => {
-      return getWebChatStatuses();
-    },
-  );
-
-  ipcMain.handle(
-    IpcChannel.WebChatScrapeResponse,
-    async (_event, target: unknown): Promise<WebChatSendResult> => {
-      return scrapeWebChatResponse(requireWebChatTarget(target));
-    },
-  );
-
-  /* ---------------------------------------------------------------------- *
    * Research mode
    * ---------------------------------------------------------------------- */
 
@@ -686,22 +591,10 @@ export function registerIpcHandlers(): void {
       const mode: ConversionMode =
         typed?.mode === "text-images" ? "text-images" : "text";
       // `auto` (the default) is Docling, run inside its own virtualenv.
-      // `fast` stays as the offline text extractor and `webchat` as the
-      // browser-driven one.
+      // `fast` stays as the offline text extractor.
       const engine: ExtractionEngine =
-        typed?.engine === "fast"
-          ? "fast"
-          : typed?.engine === "webchat"
-            ? "webchat"
-            : "auto";
+        typed?.engine === "fast" ? "fast" : "auto";
       const visionProvider = requireVisionProvider(typed?.visionProvider);
-
-      // Read once, before the long job starts: `webchat` needs the chat site
-      // the user selected, and re-reading the settings file mid-conversion
-      // would let a settings change halfway through send the second document
-      // to a different destination than the first. Docling reads its venv
-      // path from the environment (DOCLING_VENV) rather than from Settings.
-      const settings = await getSettings();
 
       // The flag is cleared before the job starts so a cancel left over from
       // a previous run — the user pressed Cancel and the job had already
@@ -715,11 +608,6 @@ export function registerIpcHandlers(): void {
         ),
         mode,
         engine,
-        // The chat site comes from Settings (`webChatTarget`), the same one
-        // the "Send to web chat" button uses. Passing it in rather than
-        // reading it inside the converter keeps the converter free of the
-        // settings module and makes the engine's dependency explicit.
-        webChatTarget: settings.webChatTarget,
         visionProviderId: visionProvider,
         onProgress: (progress) => {
           // The renderer may have closed the window while a conversion was

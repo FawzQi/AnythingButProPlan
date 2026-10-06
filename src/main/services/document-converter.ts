@@ -8,10 +8,8 @@ import type {
   ConvertResult,
   DocumentEntry,
   ExtractionEngine,
-  WebChatTargetId,
 } from '@shared/types'
 import { visionProviderOption } from '@shared/vision-providers'
-import { isChatConvertible } from '@shared/chat-formats'
 import { isCancelled } from './cancellation'
 import {
   convertedRoot,
@@ -25,8 +23,6 @@ import {
   writeState,
 } from './document-scanner'
 import { analyzeImages } from './image-analyzer'
-import { convertDocumentsViaWebChat } from './webchat-converter'
-import { sendDocumentToWebChat } from './web-chat'
 import { resolveWithinRoot, writeFileEnsuringDir } from './fs-service'
 
 /**
@@ -42,16 +38,12 @@ import { resolveWithinRoot, writeFileEnsuringDir } from './fs-service'
  * the document's output folder before the vision pass runs, so `text-images`
  * mode has files to describe with the API LLM.
  *
- * Two other engines remain:
+ * One other engine remains:
  *
  *   - `fast` — a bundled Python script (pdftext, with a pypdfium2 fallback)
  *     that runs entirely offline. Text-only, no figures, and two-column
  *     papers come out interleaved. It is the fallback when Docling is not
  *     installed and the offline path the user can pick deliberately.
- *
- *   - `webchat` — attaches the PDF to a web chat window and reads the reply
- *     back from the site's own UI. Routed to `webchat-converter.ts` before
- *     any of the local machinery runs.
  *
  * The `auto` engine value is kept as the name of "the default engine"; it
  * now means Docling, not a chat API call.
@@ -460,40 +452,22 @@ export interface ConvertOptions {
   mode: ConversionMode
   /**
    * Which extractor to run. `auto` is the Docling engine (the default);
-   * `fast` is the local Python extractor; `webchat` drives a chat site in a
-   * browser window instead of running anything locally.
+   * `fast` is the local Python extractor.
    */
   engine: ExtractionEngine
-  /** Chat site the `webchat` engine drives. Unused by the other engines. */
-  webChatTarget: WebChatTargetId
   visionProviderId?: DocumentEntry['visionProvider']
   onProgress: (progress: ConvertProgress) => void
 }
 
 /**
  * Convert every requested document. Sequential by design: the Docling layout
- * model is GPU-bound, the fast engine is CPU-bound, and the chat sites the
- * `webchat` engine drives rate-limit — running two at once makes all three
- * slower and doubles peak memory.
+ * model is GPU-bound and the fast engine is CPU-bound — running two at once
+ * makes both slower and doubles peak memory.
  */
 export async function convertDocuments(
   options: ConvertOptions,
 ): Promise<ConvertResult> {
   const { projectRoot, mode, onProgress } = options
-  // The chat-site engine is not an extractor at all: it needs a browser
-  // window, the session the user is signed into, and minutes per document.
-  // It is routed to its own module before any of the local machinery runs.
-  if (options.engine === 'webchat') {
-    return convertDocumentsViaWebChat({
-      projectRoot,
-      docPaths: options.docPaths,
-      target: options.webChatTarget,
-      onProgress,
-      send: (prompt, absoluteDocumentPath) =>
-        sendDocumentToWebChat(options.webChatTarget, prompt, absoluteDocumentPath),
-    })
-  }
-
   const engine: ExtractionEngine = options.engine === 'fast' ? 'fast' : 'auto'
   const scan = await scanDocuments(projectRoot)
   const wanted =
@@ -549,9 +523,7 @@ export async function convertDocuments(
     // them; converting one would otherwise sail through the plain-text
     // passthrough and turn a CSV into a "converted document".
     if (!isSupportedDocument(document.path)) {
-      const reason = isChatConvertible(document.path)
-        ? `The local extractors cannot read ${path.extname(document.path)} — switch the extractor to webchat to convert this document.`
-        : `Unsupported format — only .pdf, .md and .txt are converted locally.`
+      const reason = `Unsupported format — only .pdf, .md and .txt are converted locally.`
       failed.push({ path: document.path, error: reason })
       state[slug] = { path: document.path, status: 'failed', mode, error: reason }
       await writeState(projectRoot, state)

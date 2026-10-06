@@ -319,22 +319,13 @@ export function DocumentTree({ width }: { width: number }): ReactElement {
               value={engine}
               disabled={converting}
               onChange={(event) =>
-                setEngine(
-                  event.target.value === "fast"
-                    ? "fast"
-                    : event.target.value === "webchat"
-                      ? "webchat"
-                      : "auto",
-                )
+                setEngine(event.target.value === "fast" ? "fast" : "auto")
               }
               title="Which extractor converts PDFs. Marker reconstructs layout and figures but takes minutes per paper on CPU; fast uses pdftext and takes seconds, without figures."
             >
               <option value="auto">extractor: Docling (accurate, slow)</option>
               <option value="fast">
                 extractor: fast (seconds, no figures)
-              </option>
-              <option value="webchat">
-                extractor: webchat (raw, then rewrite via chat)
               </option>
             </select>
             <select

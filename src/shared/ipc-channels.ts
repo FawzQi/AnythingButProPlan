@@ -31,17 +31,6 @@ export const IpcChannel = {
   AiSettingsSave: 'ai:settings-save',
   AiListModels: 'ai:list-models',
   AiSuggestFiles: 'ai:suggest-files',
-  WebChatSend: 'webchat:send',
-  WebChatOpen: 'webchat:open',
-  WebChatCancel: 'webchat:cancel',
-  // Status of each chat site's window (idle / working / paused). Pushed from
-  // the main process whenever the state changes during a send — three or
-  // four events per send, not a poll — so the header's indicator stays in
-  // sync without the renderer having to ask.
-  WebChatStatusGet: 'webchat:status-get',
-  WebChatStatusChanged: 'webchat:status-changed',
-  WebChatResponsePushed: 'webchat:response-pushed',
-  WebChatScrapeResponse: 'webchat:scrape-response',
   ResearchScan: 'research:scan',
   ResearchConvert: 'research:convert',
   ResearchConvertProgress: 'research:convert-progress',

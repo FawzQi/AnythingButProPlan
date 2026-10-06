@@ -424,12 +424,6 @@ export interface AiSettings {
    * Which file-suggestion pipeline the "Suggest files" button runs.
    */
   suggestMethod: SuggestMethod;
-  /**
-   * Which web chat site the "Send to web chat" button targets. The site is
-   * driven through its own web UI in a dedicated window — no API key, no
-   * per-token billing.
-   */
-  webChatTarget: WebChatTargetId;
   /** Coding mode or research mode — see `AppMode`. */
   mode: AppMode;
   /**
@@ -451,8 +445,6 @@ export interface AiSettingsSaveRequest {
   apiKey?: { provider: AiProviderId; key: string };
   /** Switch the file-suggestion pipeline. */
   suggestMethod?: SuggestMethod;
-  /** Switch the web chat target used by "Send to web chat". */
-  webChatTarget?: WebChatTargetId;
   /** Switch between coding mode and research mode. */
   mode?: AppMode;
   /** Enable or disable HyDE AI query expansion across suggestion methods. */
@@ -541,69 +533,6 @@ export interface AiSuggestion {
   jevBatchCount?: number;
   /** Input tokens billed by Jev. Only present for `gitnexus-jev`. */
   jevTokens?: number;
-}
-
-/* ------------------------------------------------------------------------ *
- * Web chat bridge
- * ------------------------------------------------------------------------ */
-
-/**
- * Which chat site "Send to web chat" drives. Each target is a full web UI
- * opened in its own Electron window: the app types the prompt into the
- * site's composer, submits it, waits for the reply to finish streaming, and
- * scrapes the assistant's text back into the AI Response panel.
- *
- * This path exists so the app can be used without an API key. The trade-off
- * is that it depends on each site's DOM, which changes without notice.
- */
-export type WebChatTargetId =
-  | "deepseek"
-  | "chatgpt"
-  | "claude"
-  | "gemini"
-  | "kimi"
-  | "qwen";
-
-/** Display metadata for the web chat target picker in Settings. */
-export interface WebChatTargetInfo {
-  id: WebChatTargetId;
-  label: string;
-  /** The site's landing URL, shown as a hint in Settings. */
-  url: string;
-}
-
-export interface WebChatSendRequest {
-  target: WebChatTargetId;
-  prompt: string;
-}
-
-export interface WebChatSendResult {
-  ok: boolean;
-  /** The scraped assistant text. Present when `ok` is true. */
-  text?: string;
-  /** User-readable failure reason. Present when `ok` is false. */
-  error?: string;
-}
-
-/**
- * Live state of a web chat site's window, as observed by the main process
- * while a send is in flight.
- *
- *   - `idle`    — no send is in flight. The window is open or hidden, but
- *                 nothing is happening.
- *   - `working` — the site is streaming a reply. A visible "Stop" control
- *                 or a changing message body was observed.
- *   - `paused`  — generation stopped mid-reply and the site is waiting on
- *                 the user to press a "Continue" button before it will
- *                 finish. DeepSeek does this after a long reasoning phase
- *                 on some models. Not the same as `idle`; the reply is
- *                 incomplete and only a click in the window can resume it.
- */
-export type WebChatStatus = "idle" | "working" | "paused";
-
-export interface WebChatResponsePushedPayload {
-  target: WebChatTargetId;
-  text: string;
 }
 
 /* ------------------------------------------------------------------------ *
@@ -697,16 +626,8 @@ export interface ResearchScanResult {
  *   - `fast`    — pdftext/pypdfium2. Seconds per paper, no layout model, so
  *                 two-column papers come out interleaved and figures are left
  *                 out entirely.
- *   - `webchat` — extract raw text now, then hand it to a chat model to
- *                 rewrite as markdown: figures described from their captions,
- *                 chart and table data rebuilt as markdown tables. Runs
- *                 through the same web-chat bridge as "Send to web chat", so
- *                 it needs no API key — and because the rewrite is a chat
- *                 turn, its result comes back through the AI Response panel
- *                 and is written from there (see `ResearchPromptMode`
- *                 `rewrite`).
  */
-export type ExtractionEngine = "auto" | "fast" | "webchat";
+export type ExtractionEngine = "auto" | "fast";
 
 export interface ConvertRequest {
   projectRoot: string;
@@ -725,12 +646,7 @@ export interface ConvertProgress {
   /** 1-based position of this document in the batch. */
   index: number;
   total: number;
-  /**
-   * `chatting` is the `webchat` engine's long step: the document is attached
-   * to a chat site and the reply is awaited, which takes as long as the model
-   * takes.
-   */
-  stage: "extracting" | "images" | "saving" | "chatting";
+  stage: "extracting" | "images" | "saving";
   message: string;
 }
 

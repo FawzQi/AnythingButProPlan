@@ -26,10 +26,6 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
   const setParsedPath = useAppStore((state) => state.setParsedPath);
   const toggleInclude = useAppStore((state) => state.toggleInclude);
   const applySelected = useAppStore((state) => state.applySelected);
-  const scrapingWebChat = useAppStore((state) => state.scrapingWebChat);
-  const scrapeWebChatResponse = useAppStore(
-    (state) => state.scrapeWebChatResponse,
-  );
 
   const [draft, setDraft] = useState(rawResponse);
   const [diffTarget, setDiffTarget] = useState<{
@@ -46,9 +42,7 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
 
   // Mirror store-side changes into the textarea. Without this, the local
   // `draft` — which `useState` reads exactly once — would keep its initial
-  // (usually empty) value, so a reply the web chat bridge drops into
-  // `rawResponse` would update the parsed file list below but never appear
-  // in the input box. The equality guard stops the update from firing when
+  // (usually empty) value. The equality guard stops the update from firing when
   // the change is our own debounced write, since at that point `draft` and
   // `rawResponse` already match.
   useEffect(() => {
@@ -135,14 +129,6 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
             Clear
           </Button>
           <Button
-            variant="ghost"
-            onClick={() => void scrapeWebChatResponse()}
-            disabled={scrapingWebChat}
-            title="Scrape and copy the latest AI response from the open web chat window"
-          >
-            {scrapingWebChat ? "Scraping…" : "Scrape Web Chat"}
-          </Button>
-          <Button
             variant="primary"
             onClick={() => void confirmApply()}
             disabled={applying || selectedCount === 0}
@@ -156,7 +142,7 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder="Paste the AI response here, or use Send to web chat to fill it in."
+          placeholder="Paste the AI response here."
           spellCheck={false}
           className="h-40 shrink-0 resize-y border-b border-[#2c3038] bg-[#12141a] p-3 font-mono text-xs text-slate-200 outline-none"
         />

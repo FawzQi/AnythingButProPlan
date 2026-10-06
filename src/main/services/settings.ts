@@ -7,7 +7,6 @@ import type {
   AiSettingsSaveRequest,
   AppMode,
   SuggestMethod,
-  WebChatTargetId,
 } from '@shared/types'
 
 /**
@@ -28,8 +27,6 @@ interface StoredShape {
    * `gitnexus-only`, the local-recall method that needs no provider call.
    */
   suggestMethod: SuggestMethod
-  /** Which chat site the "Send to web chat" button drives. */
-  webChatTarget: WebChatTargetId
   /** Coding mode or research mode. Defaults to `coding`. */
   mode: AppMode
   enableHydeQuery?: boolean
@@ -42,7 +39,6 @@ const EMPTY: StoredShape = {
   encryptedKeys: {},
   modelByProvider: {},
   suggestMethod: 'gitnexus-only',
-  webChatTarget: 'deepseek',
   mode: 'coding',
   enableHydeQuery: false,
   hydeProvider: 'deepseek',
@@ -51,22 +47,6 @@ const EMPTY: StoredShape = {
 
 function asAppMode(value: unknown): AppMode {
   return value === 'research' ? 'research' : 'coding'
-}
-
-const WEB_CHAT_IDS: readonly WebChatTargetId[] = [
-  'deepseek',
-  'chatgpt',
-  'claude',
-  'gemini',
-  'kimi',
-  'qwen',
-]
-
-function asWebChatTarget(value: unknown): WebChatTargetId {
-  return typeof value === 'string' &&
-    (WEB_CHAT_IDS as readonly string[]).includes(value)
-    ? (value as WebChatTargetId)
-    : 'deepseek'
 }
 
 function settingsPath(): string {
@@ -93,7 +73,6 @@ async function readStored(): Promise<StoredShape> {
         parsed.suggestMethod === 'gitnexus-llm'
           ? parsed.suggestMethod
           : 'gitnexus-only',
-      webChatTarget: asWebChatTarget(parsed.webChatTarget),
       // Research mode arrived after the first settings files were written,
       // so an existing file has no `mode` at all. Narrowing here rather than
       // trusting the field means a missing or hand-edited value lands on
@@ -149,7 +128,6 @@ export async function getSettings(): Promise<AiSettings> {
     modelByProvider: stored.modelByProvider,
     hasApiKey,
     suggestMethod: stored.suggestMethod,
-    webChatTarget: stored.webChatTarget,
     mode: stored.mode,
     enableHydeQuery: stored.enableHydeQuery ?? false,
     hydeProvider: stored.hydeProvider ?? 'deepseek',
@@ -166,9 +144,6 @@ export async function saveSettings(
   }
   if (request.suggestMethod !== undefined) {
     stored.suggestMethod = request.suggestMethod
-  }
-  if (request.webChatTarget !== undefined) {
-    stored.webChatTarget = request.webChatTarget
   }
   if (request.mode !== undefined) {
     stored.mode = request.mode
