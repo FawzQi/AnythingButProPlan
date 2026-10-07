@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * document scan, the markdown passthrough conversion, the state file, the
  * gitignore housekeeping, and the whole-document prompt.
  *
- * The PDF path is deliberately not covered here — it shells out to Marker,
+ * The PDF path is deliberately not covered here — it shells out to Docling/Python,
  * which is not installed in CI and is not what this test is protecting. What
  * it protects is everything downstream of extraction, which is where the
  * plumbing bugs live. The PDF branch is exercised by the acceptance test in

@@ -3,7 +3,7 @@
  *
  * A conversion and an index build are the only operations in the app that
  * run for minutes, and both are loops over work that cannot be interrupted
- * halfway: a Marker subprocess killed mid-extraction leaves a truncated
+ * halfway: a converter subprocess killed mid-extraction leaves a truncated
  * markdown file, and an embedding batch cannot be resumed from its middle.
  * So neither is force-killed. The loop checks this flag at each iteration
  * boundary, finishes the unit of work in flight, writes what it has, and

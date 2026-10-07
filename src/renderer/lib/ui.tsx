@@ -34,7 +34,7 @@ const VARIANTS: Record<ButtonVariant, string> = {
  * squeezing — which is the correct behaviour and what the wrap on the
  * container is there for. `whitespace-nowrap` stops a two-word label from
  * breaking across lines when the button is genuinely narrow, so a label
- * like "Send to web chat" stays on one line rather than becoming a
+ * like "Copy prompt" stays on one line rather than becoming a
  * two-line box the same height as its neighbours.
  */
 export function Button({

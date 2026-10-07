@@ -22,8 +22,8 @@ const COMPACT = "px-2 py-0.5 text-xs";
  *
  * Buttons are context-sensitive on purpose: a document that is already
  * converted offers "Re-convert" and "Add figure descriptions" rather than the
- * same "Convert" button, because re-running a conversion costs a Marker pass
- * on the CPU (minutes) and re-running the vision pass costs money.
+ * same "Convert" button, because re-running a conversion costs a Docling pass
+ * and re-running the vision pass costs money.
  */
 
 function formatBytes(bytes: number): string {
@@ -321,7 +321,7 @@ export function DocumentTree({ width }: { width: number }): ReactElement {
               onChange={(event) =>
                 setEngine(event.target.value === "fast" ? "fast" : "auto")
               }
-              title="Which extractor converts PDFs. Marker reconstructs layout and figures but takes minutes per paper on CPU; fast uses pdftext and takes seconds, without figures."
+              title="Which extractor converts PDFs. Docling reconstructs layout and figures; fast uses pdftext and takes seconds, without figures."
             >
               <option value="auto">extractor: Docling (accurate, slow)</option>
               <option value="fast">

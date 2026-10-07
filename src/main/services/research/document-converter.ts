@@ -52,7 +52,7 @@ import { resolveWithinRoot, writeFileEnsuringDir } from '../core/fs-service'
 /** Docling loads a layout model; a hung run is minutes, not hours. */
 const DOCLING_TIMEOUT_MS = 10 * 60_000
 
-/** PyMuPDF4LLM is a pure text pass; anything near this means it hung. */
+/** The fast Python extractor (pdftext / pypdfium2) is a pure text pass; anything near this means it hung. */
 const PYTHON_TIMEOUT_MS = 3 * 60_000
 
 /**

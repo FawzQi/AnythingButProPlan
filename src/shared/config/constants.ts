@@ -5,7 +5,7 @@ export const TIMEOUTS = {
   HTTP_MS: 60_000,
   /** TypeSafe (Jev) subprocess call timeout */
   JEV_MS: 45_000,
-  /** Python helper scripts (e.g. Marker, pypdf) */
+  /** Python helper scripts (e.g. pdftext, pypdfium2) */
   PYTHON_MS: 180_000,
   /** Deep document conversion tools (Docling) */
   DOCLING_MS: 600_000,
