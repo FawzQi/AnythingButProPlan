@@ -1,4 +1,6 @@
 import path from 'node:path'
+import { countTokens } from 'gpt-tokenizer'
+import type { AiSuggestRequest, AiSuggestion } from '@shared/types'
 import { BINARY_EXTENSIONS, readTextFile } from '../core/fs-service'
 
 /**
@@ -315,7 +317,7 @@ export async function skeletonFor(
   }
 }
 
-function formatSkeleton(s: FileSkeleton): string {
+export function formatSkeleton(s: FileSkeleton): string {
   if (s.kind === 'asset') return `${s.path}  [asset]`
 
   if (s.kind === 'code') {
@@ -371,6 +373,35 @@ export async function buildCodebaseMap(
   return {
     text: skels.map(formatSkeleton).join('\n\n'),
     fileCount: skels.length,
+  }
+}
+
+/**
+ * Measure the full-skeleton map token count for a project.
+ *
+ * A dry-run utility: it does not contact any provider and does not select any
+ * files — it builds the same full-project skeleton and reports its token
+ * count, which the Prompt tab shows in its footer as a rough measure of how
+ * large a full-context request would be for the open project.
+ *
+ * This lived in `file-selector.ts`, whose name implied a selection step that
+ * never existed. It is a codebase-map concern — the only thing it does is
+ * call `buildCodebaseMap` and count the tokens.
+ */
+export async function measureMapTokens(
+  request: AiSuggestRequest,
+): Promise<AiSuggestion> {
+  const map = await buildCodebaseMap(request.projectRoot, request.filePaths)
+  return {
+    paths: [],
+    purposes: {},
+    provider: 'deepseek',
+    model: '',
+    mapTokens: countTokens(map.text),
+    outputTokens: 0,
+    durationMs: 0,
+    hallucinated: [],
+    method: 'gitnexus-only',
   }
 }
 

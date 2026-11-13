@@ -14,10 +14,11 @@ import {
   scanDocuments,
   writeState,
 } from './document-scanner'
-import { getApiKey, resolveModel } from '../core/settings'
+import { getApiKey } from '../core/settings'
 import { getProvider } from '../ai/ai-providers'
 import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from '../ai/ai-providers/google'
 import { VectorStore } from './vector-store'
+import { SlidingWindowPacer, batchByTokenBudget } from './rate-pacer'
 
 /**
  * Build the retrieval index for the converted documents.
@@ -28,18 +29,11 @@ import { VectorStore } from './vector-store'
  * switch. At 20–200 documents there is no user-visible benefit worth that.
  * See CLAUDE.md, "Embeddings".
  *
- * Requests are batched at 100 — the `batchEmbedContents` limit — and each
- * batch is one HTTP call. Cancellation is checked between batches, so a
- * cancelled build discards the work in flight and leaves the previous index
- * on disk untouched: a half-written index would silently retrieve from a
- * partial corpus, which is worse than no new index at all.
- *
- * ponytail: full rebuild every time. Embedding a 200-document corpus costs
- * real money and minutes; make it incremental (reuse vectors for documents
- * whose chunk texts are unchanged, keyed by a content hash per document) when
- * rebuilds become a routine action rather than a rare one.
+ * Batches are sized dynamically by token budget (<= 15,000 tokens & <= 50 chunks)
+ * and regulated by a sliding 60-second rate pacer to comfortably respect Google's
+ * 30K TPM and 100 RPM quotas without 429 throttling. Unchanged chunks from
+ * previous index runs with the same model are reused to conserve RPD quota.
  */
-const EMBED_BATCH = 100
 
 export interface BuildIndexRequest {
   projectRoot: string
@@ -63,7 +57,10 @@ export async function buildIndex(
   if (embedder === undefined) {
     throw new Error('The Google provider is missing its embedding endpoint.')
   }
-  const model = await resolveModel('google', EMBEDDING_MODEL)
+  // The index is only valid for the vector space it was built with, so the
+  // model is pinned to the embedding model rather than taken from the user's
+  // chat-model selection for Google.
+  const model = EMBEDDING_MODEL
 
   const scan = await scanDocuments(projectRoot)
   const wanted =
@@ -114,32 +111,120 @@ export async function buildIndex(
 
   const store = new VectorStore()
 
-  for (let offset = 0; offset < chunks.length; offset += EMBED_BATCH) {
-    if (isCancelled(projectRoot)) {
-      return { index: await readIndexStatus(projectRoot), skipped, cancelled: true }
+  // 1. Check existing index for cached vectors with the same model
+  const existingStore = new VectorStore()
+  let cachedVectors = new Map<string, number[]>()
+  try {
+    const loaded = await existingStore.load(indexPath(projectRoot))
+    if (loaded && existingStore.getModel() === model) {
+      cachedVectors = existingStore.getCachedVectors()
     }
-    const batch = chunks.slice(offset, offset + EMBED_BATCH)
-    // The heading path is embedded with the text but stored separately. A
-    // chunk lifted from the middle of section 3 rarely names its own topic;
-    // the heading is what makes "3.2 Data Collection" match a question about
-    // sampling, and the citation still quotes the heading on its own.
-    const vectors = await embedder({
-      apiKey,
-      model,
-      texts: batch.map((chunk) =>
+  } catch {
+    cachedVectors = new Map()
+  }
+
+  // 2. Separate chunks into cached vs needing embedding
+  const chunksToEmbed: Chunk[] = []
+  const vectorMap = new Map<string, number[]>()
+
+  for (const chunk of chunks) {
+    const key = `${chunk.document}:${chunk.headingPath}:${chunk.text}`
+    const cached = cachedVectors.get(key)
+    if (cached) {
+      vectorMap.set(key, cached)
+    } else {
+      chunksToEmbed.push(chunk)
+    }
+  }
+
+  let completedCount = chunks.length - chunksToEmbed.length
+
+  if (completedCount > 0) {
+    onProgress({
+      stage: 'embedding',
+      done: completedCount,
+      total: chunks.length,
+      message: `Reused ${completedCount} / ${chunks.length} cached embeddings`,
+    })
+  }
+
+  // 3. Batch and pace newly needed chunks
+  if (chunksToEmbed.length > 0) {
+    const { batches, batchTokenCounts } = batchByTokenBudget(
+      chunksToEmbed,
+      (chunk) =>
         chunk.headingPath === ''
           ? chunk.text
           : `${chunk.headingPath}\n\n${chunk.text}`,
-      ),
-    })
-    store.add(batch, vectors)
-    onProgress({
-      stage: 'embedding',
-      done: Math.min(offset + EMBED_BATCH, chunks.length),
-      total: chunks.length,
-      message: `Embedded ${Math.min(offset + EMBED_BATCH, chunks.length)} / ${chunks.length} chunks`,
-    })
+    )
+
+    const pacer = new SlidingWindowPacer()
+
+    for (const [batchIndex, batch] of batches.entries()) {
+      if (isCancelled(projectRoot)) {
+        return { index: await readIndexStatus(projectRoot), skipped, cancelled: true }
+      }
+
+      const tokensNeeded = batchTokenCounts[batchIndex] ?? 0
+
+      await pacer.waitForQuota(
+        tokensNeeded,
+        (secondsRemaining) => {
+          onProgress({
+            stage: 'embedding',
+            done: completedCount,
+            total: chunks.length,
+            message: `Pacing rate limit: waiting ${secondsRemaining}s for Gemini TPM quota…`,
+          })
+        },
+        () => isCancelled(projectRoot),
+      )
+
+      if (isCancelled(projectRoot)) {
+        return { index: await readIndexStatus(projectRoot), skipped, cancelled: true }
+      }
+
+      const batchTexts = batch.map((chunk) =>
+        chunk.headingPath === ''
+          ? chunk.text
+          : `${chunk.headingPath}\n\n${chunk.text}`,
+      )
+
+      const vectors = await embedder({
+        apiKey,
+        model,
+        texts: batchTexts,
+      })
+
+      for (const [idx, chunk] of batch.entries()) {
+        const vec = vectors[idx]
+        if (vec) {
+          const key = `${chunk.document}:${chunk.headingPath}:${chunk.text}`
+          vectorMap.set(key, vec)
+        }
+      }
+
+      completedCount += batch.length
+      onProgress({
+        stage: 'embedding',
+        done: completedCount,
+        total: chunks.length,
+        message: `Embedded ${completedCount} / ${chunks.length} chunks (${chunks.length - chunksToEmbed.length} cached)`,
+      })
+    }
   }
+
+  // 4. Align vectors to chunks
+  const allVectors: number[][] = chunks.map((chunk) => {
+    const key = `${chunk.document}:${chunk.headingPath}:${chunk.text}`
+    const vec = vectorMap.get(key)
+    if (!vec) {
+      throw new Error(`Missing vector for chunk ${chunk.id}`)
+    }
+    return vec
+  })
+
+  store.add(chunks, allVectors)
 
   if (store.getDimensions() !== EMBEDDING_DIMENSIONS) {
     // Not fatal — Google could return a different width for a future model —

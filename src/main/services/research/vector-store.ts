@@ -51,6 +51,7 @@ export class VectorStore {
   private chunks: Chunk[] = []
   private vectors: Float32Array[] = []
   private dimensions = 0
+  private model: string | null = null
 
   get size(): number {
     return this.chunks.length
@@ -60,6 +61,10 @@ export class VectorStore {
     return this.dimensions
   }
 
+  getModel(): string | null {
+    return this.model
+  }
+
   /** Distinct documents currently in the index, in insertion order. */
   documents(): string[] {
     const seen = new Set<string>()
@@ -67,10 +72,24 @@ export class VectorStore {
     return [...seen]
   }
 
+  /** Map of stable chunk key to stored vector array for caching across rebuilds. */
+  getCachedVectors(): Map<string, number[]> {
+    const map = new Map<string, number[]>()
+    for (const [index, chunk] of this.chunks.entries()) {
+      const vec = this.vectors[index]
+      if (vec) {
+        const key = `${chunk.document}:${chunk.headingPath}:${chunk.text}`
+        map.set(key, Array.from(vec))
+      }
+    }
+    return map
+  }
+
   clear(): void {
     this.chunks = []
     this.vectors = []
     this.dimensions = 0
+    this.model = null
   }
 
   /**
@@ -125,17 +144,26 @@ export class VectorStore {
    * so the dot product is the cosine and the scan is one multiply-add per
    * dimension.
    */
-  query(vector: number[], limit: number): VectorHit[] {
+  query(
+    vector: number[],
+    limit: number,
+    documentFilter?: (document: string) => boolean,
+  ): VectorHit[] {
     if (this.chunks.length === 0 || vector.length !== this.dimensions) return []
     const queryVector = normalise(Float32Array.from(vector))
     const scored: VectorHit[] = []
 
     for (const [index, stored] of this.vectors.entries()) {
+      const chunk = this.chunks[index] as Chunk
+      // Filter before scoring so an excluded document cannot occupy any of
+      // the `limit` slots. Filtering afterwards returns a short, or empty,
+      // shortlist whenever the excluded set dominates the corpus.
+      if (documentFilter !== undefined && !documentFilter(chunk.document)) continue
       let dot = 0
       for (let i = 0; i < stored.length; i += 1) {
         dot += (stored[i] as number) * (queryVector[i] as number)
       }
-      scored.push({ chunk: this.chunks[index] as Chunk, score: dot })
+      scored.push({ chunk, score: dot })
     }
 
     return scored
@@ -154,6 +182,7 @@ export class VectorStore {
       chunkCount: this.chunks.length,
       builtAt: Date.now(),
     }
+    this.model = model
     const flat = new Float32Array(this.chunks.length * this.dimensions)
     for (const [index, vector] of this.vectors.entries()) {
       flat.set(vector, index * this.dimensions)
@@ -211,6 +240,7 @@ export class VectorStore {
       vectorBuffer.byteLength / 4,
     )
     this.dimensions = meta.dimensions
+    this.model = meta.model ?? null
     this.chunks = chunks
     this.vectors = chunks.map((_, index) =>
       normalise(flat.slice(index * meta.dimensions, (index + 1) * meta.dimensions)),

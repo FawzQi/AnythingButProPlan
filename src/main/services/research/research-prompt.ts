@@ -28,6 +28,104 @@ interface FullPromptDocument {
   content: string
 }
 
+/**
+ * Output contract shared by both research prompts.
+ *
+ * Deliberately not the coding contract. The coding parser treats
+ * `===Files===` as the opening of a file-entry section and `File: <path>` as
+ * a target path to write; a research answer carries citations instead, and a
+ * citation labelled `File:` would be read as an edit and offered for writing
+ * to disk. No marker here is a word the coding parser looks for, so a
+ * research reply stays distinguishable from a coding reply by its first line
+ * even after both have been through a clipboard and back.
+ *
+ * `===Debug===` is likewise avoided: `extractDebugCommands` would read it as
+ * shell commands to run, and a research answer has no business producing
+ * commands the app might execute.
+ *
+ * The one variant is the noun: the retrieval prompt cites passages lifted out
+ * of documents, the whole-document prompt cites the documents themselves.
+ */
+export function researchOutputInstructions(
+  sourceKind: 'passage' | 'document',
+): string {
+  const plural = sourceKind === 'passage' ? 'passages' : 'documents'
+  return `## Output Instructions
+
+Produce your response in exactly the format below, and nothing else. Each
+section opens with a marker line — the section name wrapped in three equals
+signs on each side — and closes with a line of six equals signs. Do not add
+anything before the first marker line or after the last closing line.
+
+The overall shape is:
+
+    ===Sources===
+    <source entries>
+    ======
+    ===Answer===
+    <prose answer>
+    ======
+    ===Checks===
+    <verification steps>
+    ======
+
+### The Sources section
+
+One entry per ${sourceKind} the answer draws on, in the order the ${plural}
+appear above. Each entry is a \`Source:\` line naming the document and the
+section heading, followed by the ${sourceKind}'s text in a fenced block,
+copied verbatim. Example:
+
+Source: paper-a.pdf, "3 Methodology > 3.2 Data Collection"
+
+\`\`\`text
+<the ${sourceKind}'s text, exactly as it appears above>
+\`\`\`
+
+The marker names are load-bearing. The same app also reads coding replies,
+where \`===Files===\` opens a list of files to write and \`File:\` names a
+path on disk. A citation labelled \`File:\` would be read as a target file,
+so \`Source:\` is what keeps a quotation from being mistaken for an edit.
+
+### The Answer section
+
+Your answer to the question, in prose. Lead with the answer, then the
+evidence. Cite the sources you used — see "Citing sources" below.
+
+### The Checks section
+
+Steps a reader could take to verify the answer, or the single word None if
+no verification is meaningful.
+
+### Citing sources
+
+Inside the Answer section, cite the sources you used, in this form:
+
+- \`paper-a.pdf, "3 Methodology > 3.2 Data Collection"\` — the document and
+  the section heading, copied exactly as it appears above.
+- \`paper-a.pdf, abstract\` — a claim taken from the summary at the top of a
+  document rather than from its body.
+
+A claim drawn from two documents gets two citations.
+
+### What not to do
+
+- Do not open with \`===Files===\` and do not label an entry \`File:\`. That
+  is the coding format, and it is read as a file to write rather than a
+  source to cite.
+- Do not invent citations, and do not cite a document you did not read in
+  the ${plural} above.
+- Do not treat the ${plural} as complete. If they do not contain the answer,
+  say what is missing — the reader can supply different ${plural}.
+- If two ${plural} disagree, present both with their citations instead of
+  picking one.
+- Do not pad the answer with a summary of every ${sourceKind}. Use the ones
+  that bear on the question and leave the rest.
+- Do not add prose outside the three sections. The parser reads the marker
+  lines literally; anything before \`===Sources===\` or after the final
+  \`======\` is dropped.`
+}
+
 function renderFullPrompt(
   documents: FullPromptDocument[],
   question: string,
@@ -49,27 +147,7 @@ ${renderedDocs}
 
 ${task}
 
-## Output Instructions
-
-Answer in prose. Lead with the answer, then the evidence for it.
-
-### Citing sources
-
-Every factual claim taken from a document must name the document it came from, like this:
-
-- \`paper-a.pdf, "3 Methodology > 3.2 Data Collection"\` — for a claim from a specific section.
-- \`paper-a.pdf, abstract\` — for a claim from the summary at the top of a document.
-
-Quote the section heading exactly as it appears in the document. If a claim draws on several documents, cite each of them.
-
-### What not to do
-
-- Do not invent citations. If a document does not support a claim, either find the passage that does or say the documents do not cover it.
-- Do not attribute a claim to a document whose text you did not use.
-- Do not restate the question or summarise the documents section by section unless asked to.
-- If the documents disagree, say so and cite both sides rather than picking one silently.
-- If the documents do not answer the question, say that plainly. That is a useful answer; a confident wrong one is not.
-`
+${researchOutputInstructions('document')}`
 }
 
 interface RagPromptDocument {
@@ -83,71 +161,6 @@ interface RagPromptExcerpt {
   heading: string
   text: string
 }
-
-const RAG_OUTPUT_INSTRUCTIONS = `## Output Instructions
-
-Produce your response in exactly the format below, and nothing else. Each
-section opens with a marker line — the section name wrapped in three equals
-signs on each side — and closes with a line of six equals signs. Do not add
-anything before the first marker line or after the last closing line.
-
-The overall shape is:
-
-    ===Files===
-    <file entries>
-    ======
-    ===Explanation===
-    <prose answer>
-    ======
-    ===Debug===
-    <verification steps>
-    ======
-
-### The Files section
-
-One entry per excerpt the answer draws on, in the order the excerpts appear
-above. Each entry is a \`File:\` line followed by the excerpt's text in a
-fenced block, copied verbatim. Example:
-
-File: paper-a.pdf, "3 Methodology > 3.2 Data Collection"
-
-\`\`\`text
-<the excerpt's text, exactly as it appears above>
-\`\`\`
-
-### The Explanation section
-
-Your answer to the question, in prose. Lead with the answer, then the
-evidence. Cite the excerpt labels you used — see "Citing sources" below.
-
-### The Debug section
-
-Steps a reader could take to verify the answer, or the single word None if
-no verification is meaningful.
-
-### Citing sources
-
-Inside the Explanation section, cite the excerpt labels you used, in this form:
-
-- \`paper-a.pdf, "3 Methodology > 3.2 Data Collection"\` — the document and
-  the section heading, copied exactly as it appears on the excerpt.
-
-A claim drawn from two documents gets two citations. A claim drawn from an
-abstract rather than an excerpt is cited as \`paper-a.pdf, abstract\`.
-
-### What not to do
-
-- Do not invent citations, and do not cite a document you did not read in the
-  excerpts above.
-- Do not treat the excerpts as complete. If they do not contain the answer,
-  say what is missing — the reader can retrieve different passages.
-- If two excerpts disagree, present both with their citations instead of
-  picking one.
-- Do not pad the answer with a summary of every excerpt. Use the ones that
-  bear on the question and leave the rest.
-- Do not add prose outside the three sections. The parser reads the marker
-  lines literally; anything before \`===Files===\` or after the final \`======\`
-  is dropped.`
 
 function renderRagPrompt(
   question: string,
@@ -183,7 +196,7 @@ answer the question. They are not the whole documents, and they may overlap or
 leave gaps. Each one is labelled with the document and section it came from.
 
 ${renderedExcerpts}
-${RAG_OUTPUT_INSTRUCTIONS}`
+${researchOutputInstructions('passage')}`
 }
 
 const MAX_FULL_DOCUMENT_BYTES = 400_000

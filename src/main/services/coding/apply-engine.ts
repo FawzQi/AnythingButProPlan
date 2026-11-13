@@ -50,6 +50,8 @@ export async function computeDiff(
 export async function applyFiles(
   request: ApplyRequest,
 ): Promise<ApplyResult[]> {
+  if (request.atomic === true) return applyAtomically(request);
+
   const results: ApplyResult[] = [];
 
   for (const file of request.files) {
@@ -73,6 +75,19 @@ export async function applyFiles(
         );
         results.push({ path: file.path, status: "patched" });
       } else {
+        const collapse = await detectSizeCollapse(
+          request.projectRoot,
+          file.path,
+          file.content,
+        );
+        if (collapse) {
+          results.push({
+            path: file.path,
+            status: "failed",
+            error: collapse,
+          });
+          continue;
+        }
         const outcome = await writeFile(
           request.projectRoot,
           file.path,
@@ -90,6 +105,151 @@ export async function applyFiles(
   }
 
   return results;
+}
+
+/**
+ * All-or-nothing apply.
+ *
+ * Phase 1 resolves every entry without touching the disk: paths are validated,
+ * patches are applied in memory against the current file contents, and the
+ * size-collapse guard runs. Only if every entry resolves is anything written.
+ *
+ * A mid-batch failure therefore leaves the tree byte-identical, which is what
+ * the session loop needs: a partially applied turn is a state neither the
+ * model nor the verifier can reason about.
+ */
+async function applyAtomically(request: ApplyRequest): Promise<ApplyResult[]> {
+  interface Planned {
+    path: string;
+    kind: "write" | "delete" | "patch";
+    content: string;
+    exists: boolean;
+  }
+
+  const planned: Planned[] = [];
+  const failures: ApplyResult[] = [];
+
+  for (const file of request.files) {
+    if (file.path === null || file.path === "") {
+      failures.push({ path: file.path ?? "", status: "failed", error: "No target path." });
+      continue;
+    }
+    try {
+      resolveWithinRoot(request.projectRoot, file.path);
+      const exists = await fileExists(request.projectRoot, file.path);
+
+      if (file.delete === true) {
+        planned.push({ path: file.path, kind: "delete", content: "", exists });
+        continue;
+      }
+
+      if (file.patches && file.patches.length > 0) {
+        if (!exists) {
+          throw new Error(
+            `${file.path} does not exist on disk, so a patch cannot be applied. Ask the AI to emit the full file instead.`,
+          );
+        }
+        const original = await readTextFile(request.projectRoot, file.path);
+        const applied = applyPatches(original, file.patches);
+        if (!applied.ok) {
+          throw new Error(`${applied.reason} Ask the AI to resend this file as a full rewrite.`);
+        }
+        planned.push({ path: file.path, kind: "patch", content: applied.content, exists });
+        continue;
+      }
+
+      const collapse = await detectSizeCollapse(request.projectRoot, file.path, file.content);
+      if (collapse !== null) throw new Error(collapse);
+
+      planned.push({ path: file.path, kind: "write", content: file.content, exists });
+    } catch (error) {
+      failures.push({
+        path: file.path,
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (failures.length > 0) {
+    // Nothing has been written. Report the blocked entries and mark the rest
+    // as skipped so the caller can tell "failed" from "never attempted".
+    const failedPaths = new Set(failures.map((result) => result.path));
+    return [
+      ...failures,
+      ...request.files
+        .filter((file) => file.path !== null && !failedPaths.has(file.path ?? ""))
+        .map((file) => ({
+          path: file.path as string,
+          status: "skipped" as const,
+          error: "Not applied: another entry in this batch failed.",
+        })),
+    ];
+  }
+
+  // Phase 2: write. A write error here is a real I/O failure, which is rare
+  // enough that the honest response is to report exactly which entries landed.
+  const results: ApplyResult[] = [];
+  for (const entry of planned) {
+    try {
+      if (entry.kind === "delete") {
+        await deleteFile(request.projectRoot, entry.path);
+        results.push({ path: entry.path, status: "deleted" });
+        continue;
+      }
+      if (entry.kind === "patch") {
+        await writeFile(request.projectRoot, entry.path, entry.content);
+        results.push({ path: entry.path, status: "patched" });
+        continue;
+      }
+      const outcome = await writeFile(request.projectRoot, entry.path, entry.content);
+      results.push({ path: entry.path, status: outcome.status });
+    } catch (error) {
+      results.push({
+        path: entry.path,
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return results;
+}
+
+/**
+ * A full-file rewrite that is dramatically smaller than the file it replaces
+ * is almost always a truncated response, not an intentional deletion of most
+ * of the file. Writing it would silently destroy code the model never meant
+ * to remove, so the write is refused and the result explains what to ask for.
+ *
+ * Thresholds: below `MIN_LINES_FOR_COLLAPSE_CHECK` a file is small enough that
+ * a real rewrite can legitimately shrink it a lot. Above that, keeping less
+ * than `MIN_RETAINED_FRACTION` of the original lines means something went
+ * wrong upstream.
+ */
+const MIN_LINES_FOR_COLLAPSE_CHECK = 40;
+const MIN_RETAINED_FRACTION = 0.4;
+
+async function detectSizeCollapse(
+  root: string,
+  relativePath: string,
+  proposed: string,
+): Promise<string | null> {
+  if (!(await fileExists(root, relativePath))) return null;
+  const original = await readTextFile(root, relativePath);
+
+  const originalLines = original.split("\n").length;
+  const proposedLines = proposed.split("\n").length;
+  if (originalLines < MIN_LINES_FOR_COLLAPSE_CHECK) return null;
+
+  const retained = proposedLines / originalLines;
+  if (retained >= MIN_RETAINED_FRACTION) return null;
+
+  return (
+    `Refused to write ${relativePath}: the response contains ${proposedLines} lines ` +
+    `but the file on disk has ${originalLines} (${Math.round(retained * 100)}% retained). ` +
+    `This usually means the answer was cut off. Ask the AI to resend the complete file, ` +
+    `or use a patch for a targeted change.`
+  );
 }
 
 /**

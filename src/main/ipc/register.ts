@@ -5,6 +5,8 @@ import { registerPromptHandlers } from "./handlers/prompt-handlers";
 import { registerAiHandlers } from "./handlers/ai-handlers";
 import { registerResearchHandlers } from "./handlers/research-handlers";
 import { registerSettingsHandlers } from "./handlers/settings-handlers";
+import { registerDebugHandlers } from "./handlers/debug-handlers";
+import { registerSessionHandlers } from "./handlers/session-handlers";
 
 /**
  * Register all IPC handlers across domain modules.
@@ -18,4 +20,6 @@ export function registerIpcHandlers(): void {
   registerAiHandlers();
   registerResearchHandlers();
   registerSettingsHandlers();
+  registerDebugHandlers();
+  registerSessionHandlers();
 }

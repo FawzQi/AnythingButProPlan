@@ -266,10 +266,10 @@ export function ResearchDashboard(): ReactElement {
                 {prompt === "" ? (
                   <p className="max-w-md text-xs leading-relaxed text-slate-500">
                     Convert some documents on the left, then press Build
-                    prompt. The prompt appears here and is piped to the AI
-                    Response panel on the right the same way a coding prompt
-                    is — paste it into the chat, bring the answer back, and
-                    the apply engine handles the rest.
+                    prompt. The prompt appears here. Copy it into the chat,
+                    then paste the reply into the AI Response panel on the
+                    right to keep it next to the prompt. A research answer is
+                    cited prose, so there is nothing to apply.
                   </p>
                 ) : (
                   <pre className="whitespace-pre-wrap break-words text-[11px] leading-relaxed text-slate-300">

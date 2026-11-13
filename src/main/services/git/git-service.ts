@@ -8,6 +8,7 @@ import type {
   GitFileStatusCode,
   GitStatus,
 } from '@shared/types'
+import { resolveWithinRoot } from '../core/fs-service'
 import type { ProcessResult } from './gitnexus'
 
 /**
@@ -15,8 +16,17 @@ import type { ProcessResult } from './gitnexus'
  * stdin so a Git command that would prompt for credentials or an editor
  * fails fast rather than hanging the main process.
  */
-function runGit(root: string, args: string[]): Promise<ProcessResult> {
+const GIT_TIMEOUT_MS = 15_000
+
+function runGit(
+  root: string,
+  args: string[],
+  timeoutMs = GIT_TIMEOUT_MS,
+): Promise<ProcessResult> {
   return new Promise((resolve) => {
+    let timer: NodeJS.Timeout | undefined
+    let settled = false
+
     const child = spawn('git', args, {
       cwd: root,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -26,16 +36,38 @@ function runGit(root: string, args: string[]): Promise<ProcessResult> {
     })
     let stdout = ''
     let stderr = ''
+
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        child.kill('SIGKILL')
+        resolve({
+          ok: false,
+          stdout,
+          stderr: `Git command timed out after ${timeoutMs}ms: git ${args.join(' ')}`,
+        })
+      }, timeoutMs)
+    }
+
     child.stdout?.on('data', (chunk) => {
       stdout += String(chunk)
     })
     child.stderr?.on('data', (chunk) => {
       stderr += String(chunk)
     })
-    child.on('error', (error) =>
-      resolve({ ok: false, stdout, stderr: error.message }),
-    )
-    child.on('close', (code) => resolve({ ok: code === 0, stdout, stderr }))
+    child.on('error', (error) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      resolve({ ok: false, stdout, stderr: error.message })
+    })
+    child.on('close', (code) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      resolve({ ok: code === 0, stdout, stderr })
+    })
   })
 }
 
@@ -335,6 +367,7 @@ export async function getDiffContent(
   relativePath: string,
   staged: boolean,
 ): Promise<GitDiffContent> {
+  const absolutePath = resolveWithinRoot(root, relativePath)
   const originalRef = staged ? `HEAD:${relativePath}` : `:${relativePath}`
   const originalResult = await runGit(root, ['show', originalRef])
   const original = originalResult.ok ? originalResult.stdout : ''
@@ -345,7 +378,7 @@ export async function getDiffContent(
     modified = indexResult.ok ? indexResult.stdout : ''
   } else {
     try {
-      modified = await fs.readFile(path.join(root, relativePath), 'utf8')
+      modified = await fs.readFile(absolutePath, 'utf8')
     } catch {
       // Deleted files have no working-tree content; a diff against the
       // index then shows the removal, which is exactly what the user wants.

@@ -1,7 +1,7 @@
 import type { CodeBlock, PathHint } from './types'
 
 /** Language info-string -> plausible extension, for the language-hint rule only. */
-const LANGUAGE_EXTENSIONS: Record<string, string> = {
+export const LANGUAGE_EXTENSIONS: Record<string, string> = {
   ts: 'ts',
   typescript: 'ts',
   tsx: 'tsx',
@@ -83,7 +83,7 @@ export function normalizePath(raw: string): string | null {
   candidate = candidate.replace(/^\.\//, '').replace(/^\/+/, '').replace(/^"|"$/g, '')
 
   if (candidate === '' || candidate.length > 512) return null
-  if (candidate.includes('..')) return null
+  if (candidate.split('/').some((seg) => seg === '..')) return null
   if (candidate.includes('\0')) return null
   if (!/^[\w.@+-][\w./@+ -]*$/.test(candidate)) return null
 

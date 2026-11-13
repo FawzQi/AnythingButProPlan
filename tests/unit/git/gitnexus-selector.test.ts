@@ -173,3 +173,31 @@ describe.skipIf(!hasGit)("suggestFilesGitNexusOnly", () => {
     }
   });
 });
+
+describe("Jev score thresholds", () => {
+  // Jev scores are a fractional probability-weighted position on a 0-3
+  // rubric. With integer thresholds (`>= 3`) the "included" bucket was
+  // unreachable, so every result fell through to review or dropped.
+  const route = (score: number, confidence: number): "included" | "flagged" | "dropped" => {
+    if (score >= 2.5 && confidence >= 0.85) return "included";
+    if (score >= 1.5) return "flagged";
+    return "dropped";
+  };
+
+  it("includes a fractional score just inside the top band", () => {
+    expect(route(2.6, 0.91)).toBe("included");
+    expect(route(2.5, 0.85)).toBe("included");
+  });
+
+  it("flags the middle band", () => {
+    expect(route(2.0, 0.95)).toBe("flagged");
+  });
+
+  it("drops the lower band", () => {
+    expect(route(1.2, 0.99)).toBe("dropped");
+  });
+
+  it("does not include a high score with low confidence", () => {
+    expect(route(2.9, 0.4)).toBe("flagged");
+  });
+});

@@ -34,7 +34,7 @@ const { scanDocuments, ensureGitignore, slugFor, markdownPathFor } = await impor
 const { convertDocuments } = await import(
   "../../../src/main/services/research/document-converter"
 );
-const { buildResearchPrompt } = await import(
+const { buildResearchPrompt, researchOutputInstructions } = await import(
   "../../../src/main/services/research/research-prompt"
 );
 
@@ -320,5 +320,55 @@ describe("buildResearchPrompt in full mode", () => {
         question: "   ",
       }),
     ).rejects.toThrow(/needs a question/i);
+  });
+});
+
+describe("research output contract", () => {
+  /**
+   * The coding parser reads `===Files===` as the start of a file list and
+   * `File: <path>` as a target to write. A research reply is a cited answer,
+   * and if it used those markers, pasting it into the response panel would
+   * offer every quoted passage for writing to disk. The two grammars have to
+   * stay disjoint at the marker level, not merely by convention.
+   */
+  it("shares no section marker or entry label with the coding contract", () => {
+    for (const kind of ["passage", "document"] as const) {
+      const instructions = researchOutputInstructions(kind);
+      expect(instructions).toContain("===Sources===");
+      expect(instructions).toContain("===Answer===");
+      expect(instructions).toContain("===Checks===");
+      // Running text may name the coding markers to warn the model off them,
+      // but neither may ever be a marker line of its own.
+      expect(instructions).not.toMatch(/^[ \t]*={2,}\s*Files\s*={2,}[ \t]*$/m);
+      expect(instructions).not.toMatch(/^[ \t]*={2,}\s*Debug\s*={2,}[ \t]*$/m);
+      // And the citation label must not be the coding file-header label.
+      expect(instructions).not.toMatch(/^File: /m);
+      expect(instructions).toMatch(/^Source: /m);
+    }
+  });
+
+  it("emits the contract in both prompt modes", async () => {
+    await fs.writeFile(
+      path.join(root, "docs", "a.md"),
+      "# Paper A\n\n## 1 Intro\n\nalpha finding\n",
+    );
+    await convertDocuments({
+      projectRoot: root,
+      docPaths: [],
+      mode: "text",
+      engine: "auto",
+      onProgress: () => {},
+    });
+
+    // Full mode needs no index. RAG needs one, which needs embeddings, so the
+    // RAG half is covered by the contract test above rather than here.
+    const result = await buildResearchPrompt({
+      projectRoot: root,
+      mode: "full",
+      docPaths: [],
+      question: "",
+    });
+    expect(result.prompt).toContain("===Sources===");
+    expect(result.prompt).not.toMatch(/^[ \t]*={2,}\s*Files\s*={2,}[ \t]*$/m);
   });
 });

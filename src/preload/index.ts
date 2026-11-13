@@ -21,6 +21,9 @@ import type {
   ResearchScanResult,
   ApplyResult,
   ConfirmDialogRequest,
+  DebugProgressEvent,
+  DebugRunRequest,
+  DebugRunResponse,
   DeleteFileRequest,
   DeleteFileResult,
   DiffRequest,
@@ -41,6 +44,13 @@ import type {
   ScanResult,
   WriteFileRequest,
   WriteFileResult,
+  PlanStep,
+  Session,
+  SessionCreateRequest,
+  SessionProgressEvent,
+  SessionSubmitResult,
+  SessionSummary,
+  TurnPrompt,
 } from "@shared/types";
 
 /**
@@ -138,6 +148,50 @@ const api = {
     ipcRenderer.invoke(IpcChannel.RecentFoldersRemove, folderPath),
   recentFoldersClear: (): Promise<RecentFolder[]> =>
     ipcRenderer.invoke(IpcChannel.RecentFoldersClear),
+  runDebugCommands: (request: DebugRunRequest): Promise<DebugRunResponse> =>
+    ipcRenderer.invoke(IpcChannel.DebugRunCommands, request),
+  killDebugCommands: (): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.DebugKillCommands),
+  onDebugProgress: (
+    callback: (progress: DebugProgressEvent) => void,
+  ): (() => void) =>
+    subscribe<DebugProgressEvent>(IpcChannel.DebugProgress, callback),
+  // ---- Coding sessions --------------------------------------------------
+  createSession: (request: SessionCreateRequest): Promise<{ session: Session; prompt: TurnPrompt }> =>
+    ipcRenderer.invoke(IpcChannel.SessionCreate, request),
+  getSession: (request: { projectRoot: string; sessionId: string }): Promise<Session | null> =>
+    ipcRenderer.invoke(IpcChannel.SessionGet, request),
+  listSessions: (request: { projectRoot: string }): Promise<SessionSummary[]> =>
+    ipcRenderer.invoke(IpcChannel.SessionList, request),
+  getActiveSession: (request: {
+    projectRoot: string;
+  }): Promise<{ session: Session; prompt: TurnPrompt } | null> =>
+    ipcRenderer.invoke(IpcChannel.SessionActive, request),
+  deleteSession: (request: { projectRoot: string; sessionId: string }): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.SessionDelete, request),
+  submitSessionResponse: (request: {
+    projectRoot: string;
+    sessionId: string;
+    response: string;
+  }): Promise<SessionSubmitResult> =>
+    ipcRenderer.invoke(IpcChannel.SessionSubmit, request),
+  cancelSession: (request: { projectRoot: string }): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.SessionCancel, request),
+  updateSessionPlan: (request: {
+    projectRoot: string;
+    sessionId: string;
+    plan: PlanStep[];
+  }): Promise<Session> =>
+    ipcRenderer.invoke(IpcChannel.SessionUpdatePlan, request),
+  rollbackSessionTurn: (request: {
+    projectRoot: string;
+    checkpointId: string;
+  }): Promise<{ ok: boolean; errors: string[] }> =>
+    ipcRenderer.invoke(IpcChannel.SessionRollbackTurn, request),
+  onSessionProgress: (
+    callback: (progress: SessionProgressEvent) => void,
+  ): (() => void) =>
+    subscribe<SessionProgressEvent>(IpcChannel.SessionProgress, callback),
   /**
    * Progress subscriptions. Each returns its own unsubscribe function rather
    * than exposing `ipcRenderer.removeListener` — the renderer never sees the

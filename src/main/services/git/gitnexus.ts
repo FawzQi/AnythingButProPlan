@@ -231,7 +231,11 @@ export async function queryGitNexus(
   terms: string[],
   limit = 60,
 ): Promise<GitNexusHit[]> {
-  const cleaned = terms.map((term) => term.trim()).filter((term) => term !== '')
+  // Strip shell metacharacters to prevent command injection on Windows shell: true
+  const cleaned = terms
+    .map((term) => term.replace(/[^\w./@-]/g, ' ').trim())
+    .flatMap((term) => term.split(/\s+/))
+    .filter((term) => term !== '')
   if (cleaned.length === 0) return []
   const status = await checkGitNexus()
   if (!status.available) return []
@@ -240,6 +244,7 @@ export async function queryGitNexus(
   // concrete `gitnexus.cmd` location; on other platforms it falls back to
   // the bare name, which is what a global npm install puts on PATH.
   const command = status.executablePath ?? 'gitnexus'
+  const safeLimit = Math.max(1, Math.min(1000, Math.floor(limit) || 60))
 
   const result = await runBinary(
     command,
@@ -247,7 +252,7 @@ export async function queryGitNexus(
       'query',
       '--json',
       '--limit',
-      String(limit),
+      String(safeLimit),
       '--terms',
       cleaned.join(' '),
     ],

@@ -3,7 +3,7 @@ import { IpcChannel } from "@shared/ipc-channels";
 import type { AiSuggestRequest, AiSuggestion } from "@shared/types";
 import { discoverModels } from "../../services/ai/ai-providers";
 import { getApiKey, getSettings } from "../../services/core/settings";
-import { measureMapTokens } from "../../services/coding/file-selector";
+import { measureMapTokens } from "../../services/coding/codebase-map";
 import {
   suggestFilesGitNexusJev,
   suggestFilesGitNexusLlm,
@@ -19,6 +19,7 @@ export function registerAiHandlers(): void {
       if (
         id !== "deepseek" &&
         id !== "groq" &&
+        id !== "openai" &&
         id !== "openrouter" &&
         id !== "google"
       ) {

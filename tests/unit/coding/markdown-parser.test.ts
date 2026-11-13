@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { extractCodeBlocks } from '../../../src/main/services/coding/response-parser/markdown-parser'
+import {
+  extractCodeBlocks,
+  extractPlainBlocks,
+  extractDeletePaths,
+} from '../../../src/main/services/coding/response-parser/markdown-parser'
 import { normalizePath, resolvePath } from '../../../src/main/services/coding/response-parser/path-heuristics'
 
 describe('extractCodeBlocks', () => {
@@ -71,6 +75,7 @@ describe('resolvePath', () => {
     precedingText: '',
     rawBlock: '',
     startLine: 1,
+    unterminated: false,
     ...overrides,
   })
 
@@ -78,5 +83,70 @@ describe('resolvePath', () => {
     const hint = resolvePath(block({ precedingText: 'Here is the file:' }))
     expect(hint.path).toBeNull()
     expect(hint.ambiguous).toBe(true)
+  })
+})
+
+describe('extractPlainBlocks', () => {
+  it('stops at Delete: directives and does not absorb them into code content', () => {
+    const input = `File: src/first.ts
+const x = 1
+
+Delete: src/old.ts
+
+File: src/second.ts
+const y = 2
+`
+    const blocks = extractPlainBlocks(input)
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0]?.content.trim()).toBe('const x = 1')
+    expect(blocks[1]?.content.trim()).toBe('const y = 2')
+  })
+})
+
+describe('extractDeletePaths', () => {
+  it('extracts Delete: directives from prose', () => {
+    const input = `I removed these files:
+Delete: src/obsolete.ts
+Delete: tests/legacy.test.ts
+`
+    expect(extractDeletePaths(input)).toEqual([
+      'src/obsolete.ts',
+      'tests/legacy.test.ts',
+    ])
+  })
+
+  it('ignores Delete: lines inside fenced code blocks', () => {
+    const input = `Delete: src/real-delete.ts
+\`\`\`sql
+DELETE: FROM users WHERE id = 1;
+\`\`\`
+`
+    expect(extractDeletePaths(input)).toEqual(['src/real-delete.ts'])
+  })
+
+  it('ignores Delete: lines inside plaintext code blocks', () => {
+    const input = `Delete: src/real-delete.ts
+File: src/query.sql
+DELETE: FROM users WHERE id = 1;
+
+Delete: src/another-delete.ts
+`
+    expect(extractDeletePaths(input)).toEqual([
+      'src/real-delete.ts',
+      'src/another-delete.ts',
+    ])
+  })
+
+  it('ignores Delete: lines inside SEARCH/REPLACE patches', () => {
+    const input = `File: src/clean.ts
+<<<<<<< SEARCH
+DELETE: FROM old_table;
+=======
+TRUNCATE TABLE old_table;
+>>>>>>> REPLACE
+
+Delete: src/target.ts
+`
+    expect(extractDeletePaths(input)).toEqual(['src/target.ts'])
   })
 })

@@ -63,7 +63,11 @@ export async function embedQuestion(question: string): Promise<number[]> {
   if (embedder === undefined) {
     throw new Error('The Google provider is missing its embedding endpoint.')
   }
-  const model = await resolveModel('google', EMBEDDING_MODEL)
+  // Always the pinned embedding model. `resolveModel` returns whatever chat
+  // model the user selected for Google, which produces vectors from a
+  // different space than the index was built with — silently wrong results,
+  // not an error.
+  const model = EMBEDDING_MODEL
   const [vector] = await embedder({ apiKey, model, texts: [question] })
   if (vector === undefined) {
     throw new Error('The embedding endpoint returned no vector for the question.')
@@ -85,9 +89,14 @@ export async function retrieve(
   const allowed =
     request.documentPaths.length === 0 ? null : new Set(request.documentPaths)
 
-  const shortlist = store
-    .query(vector, CANDIDATE_LIMIT)
-    .filter((hit) => allowed === null || allowed.has(hit.chunk.document))
+  // The document filter is pushed into the scan. Filtering after the top-k cut
+  // would let excluded documents consume candidate slots and return a short or
+  // empty shortlist even when plenty of allowed chunks exist.
+  const shortlist = store.query(
+    vector,
+    CANDIDATE_LIMIT,
+    allowed === null ? undefined : (document) => allowed.has(document),
+  )
 
   if (shortlist.length === 0) {
     return { hits: [], candidateCount: 0, reranked: false }

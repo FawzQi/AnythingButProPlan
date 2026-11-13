@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
-import Editor from "@monaco-editor/react";
+import Editor, { useMonaco } from "@monaco-editor/react";
 import { useAppStore } from "../../stores/app-store";
 import { countFiles } from "../../lib/tree";
 import { insertCustomPrompt } from "../../lib/prompt";
@@ -237,6 +237,33 @@ function EditorTab(): ReactElement {
   const editingContent = useAppStore((state) => state.editingContent);
   const editingLoading = useAppStore((state) => state.editingLoading);
   const setEditingContent = useAppStore((state) => state.setEditingContent);
+  const monaco = useMonaco();
+
+  // Dispose models from inactive files to avoid retaining them in Monaco's global registry.
+  useEffect(() => {
+    if (!monaco || !editingPath) return;
+    for (const model of monaco.editor.getModels()) {
+      const p = model.uri.path;
+      // Skip ephemeral default models (e.g. PromptTab)
+      if (/^\/?model\/\d+$/.test(p) || /^\/\d+$/.test(p)) continue;
+      if (p !== editingPath && p !== `/${editingPath}`) {
+        model.dispose();
+      }
+    }
+  }, [monaco, editingPath]);
+
+  // Teardown file models on EditorTab unmount
+  useEffect(() => {
+    return () => {
+      if (!monaco) return;
+      for (const model of monaco.editor.getModels()) {
+        const p = model.uri.path;
+        if (!/^\/?model\/\d+$/.test(p) && !/^\/\d+$/.test(p)) {
+          model.dispose();
+        }
+      }
+    };
+  }, [monaco]);
 
   if (!editingPath) {
     return (

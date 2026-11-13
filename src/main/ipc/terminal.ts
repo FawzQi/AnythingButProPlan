@@ -12,8 +12,8 @@ export function openTerminalAt(cwd: string): void {
   let args: string[];
 
   if (platform === "win32") {
-    command = "cmd";
-    args = ["/c", "start", "", "cmd", "/K", `cd /d "${cwd}"`];
+    command = "cmd.exe";
+    args = ["/c", "start", "", "cmd.exe"];
   } else if (platform === "darwin") {
     command = "open";
     args = ["-a", "Terminal", cwd];
@@ -22,7 +22,7 @@ export function openTerminalAt(cwd: string): void {
     args = [`--working-directory=${cwd}`];
   }
 
-  const child = spawn(command, args, { detached: true, stdio: "ignore" });
+  const child = spawn(command, args, { cwd, detached: true, stdio: "ignore" });
   child.on("error", (error) => {
     console.error(`Failed to open terminal at ${cwd}:`, error);
   });

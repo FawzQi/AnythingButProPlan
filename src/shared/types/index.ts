@@ -5,3 +5,5 @@ export * from "./response";
 export * from "./ai";
 export * from "./settings";
 export * from "./research";
+export * from "./debug";
+export * from "./session";

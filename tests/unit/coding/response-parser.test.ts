@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { parseResponse } from '../../../src/main/services/coding/response-parser'
+import {
+  extractCodeBlocks,
+  extractDebugCommands,
+  parseResponse,
+} from '../../../src/main/services/coding/response-parser'
 
 /**
  * Every test builds its response inline rather than loading a fixture. The
@@ -446,3 +450,106 @@ describe('parseResponse — ParsedFile discriminant', () => {
     }
   })
 })
+
+describe('extractDebugCommands', () => {
+  it('parses commands in a fenced bash block from a delimited ===Debug=== section', () => {
+    const raw = [
+      '===Files===',
+      'File: src/index.ts',
+      '```typescript',
+      'export const x = 1',
+      '```',
+      '======',
+      '===Explanation===',
+      'Added x',
+      '======',
+      '===Debug===',
+      '```bash',
+      'npm run typecheck',
+      'npm test',
+      '```',
+      '======',
+    ].join('\n')
+
+    const result = parseResponse(raw)
+    expect(result.debugCommands).toEqual(['npm run typecheck', 'npm test'])
+  })
+
+  it('strips comments and leading $ prompts inside code blocks', () => {
+    const raw = [
+      '===Debug===',
+      '```sh',
+      '# Run verification',
+      '$ npm run build',
+      '// Run unit test',
+      '$ pytest tests/',
+      '```',
+      '======',
+    ].join('\n')
+
+    expect(extractDebugCommands(raw)).toEqual(['npm run build', 'pytest tests/'])
+  })
+
+  it('returns empty array when Debug section is None', () => {
+    const raw = [
+      '===Debug===',
+      'None',
+      '======',
+    ].join('\n')
+
+    expect(extractDebugCommands(raw)).toEqual([])
+  })
+
+  it('parses commands from legacy markdown heading ## Debug', () => {
+    const raw = [
+      '## Debug',
+      '```bash',
+      'npm test',
+      '```',
+    ].join('\n')
+
+    expect(extractDebugCommands(raw)).toEqual(['npm test'])
+  })
+
+  it('extracts fallback commands when no fenced block is present', () => {
+    const raw = [
+      '===Debug===',
+      '$ npm run lint',
+      '$ npm test',
+      '======',
+    ].join('\n')
+
+    expect(extractDebugCommands(raw)).toEqual(['npm run lint', 'npm test'])
+  })
+
+  it('returns empty array if no Debug section exists', () => {
+    const raw = 'File: src/a.ts\n```ts\nconst a = 1\n```'
+    expect(extractDebugCommands(raw)).toEqual([])
+  })
+})
+
+describe("truncation detection", () => {
+  it("flags an unterminated fence and warns about it", () => {
+    const raw = [
+      "File: src/a.ts",
+      "",
+      "```ts",
+      "export const a = 1;",
+    ].join("\n");
+
+    const block = extractCodeBlocks(raw)[0];
+    expect(block?.unterminated).toBe(true);
+
+    const parsed = parseResponse(raw);
+    expect(parsed.files[0]?.truncated).toBe(true);
+    expect(parsed.warnings.some((w) => w.includes("never closed"))).toBe(true);
+  });
+
+  it("does not flag a properly closed fence", () => {
+    const raw = ["File: src/a.ts", "", "```ts", "export const a = 1;", "```"].join("\n");
+
+    const parsed = parseResponse(raw);
+    expect(parsed.files[0]?.truncated).toBe(false);
+    expect(parsed.warnings.some((w) => w.includes("never closed"))).toBe(false);
+  });
+});

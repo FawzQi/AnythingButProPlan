@@ -16,6 +16,12 @@ export interface CodeBlock {
   rawBlock: string
   /** 1-based line number of the opening fence. */
   startLine: number
+  /**
+   * True when no closing fence was found and the block ran to end of input.
+   * Almost always means the chat UI or the model's token limit cut the
+   * response off, so the content is not safe to write to disk unexamined.
+   */
+  unterminated: boolean
 }
 
 export interface PathHint {

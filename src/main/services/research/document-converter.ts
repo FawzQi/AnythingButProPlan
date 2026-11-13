@@ -363,10 +363,31 @@ async function extractWithDocling(
       reason: `Docling timed out after ${Math.round(DOCLING_TIMEOUT_MS / 60_000)} minutes.`,
     }
   }
-  if (result.code !== 0) {
+  let doclingRun = result
+  let fallbackWarning: string | undefined
+
+  if (doclingRun.code !== 0) {
+    const isCudaOom = /out of memory|cuda error/i.test(doclingRun.stderr)
+    if (isCudaOom && DOCLING_DEVICE !== 'cpu') {
+      const cpuRun = await run(
+        venvPython,
+        [script, absolutePath, workDir, '--device', 'cpu'],
+        DOCLING_TIMEOUT_MS,
+      )
+      if (cpuRun.code === 0) {
+        doclingRun = cpuRun
+        fallbackWarning =
+          'Docling ran out of GPU memory and automatically completed on CPU.'
+      } else {
+        doclingRun = cpuRun
+      }
+    }
+  }
+
+  if (doclingRun.code !== 0) {
     return {
       ok: false,
-      reason: `Docling failed: ${tail(result.stderr, 300) || `exit code ${String(result.code)}`}`,
+      reason: `Docling failed: ${tail(doclingRun.stderr, 300) || `exit code ${String(doclingRun.code)}`}`,
     }
   }
   const markdownPath = await findFirstWithExtension(workDir, '.md')
@@ -383,6 +404,7 @@ async function extractWithDocling(
     markdown: await fs.readFile(markdownPath, 'utf8'),
     imagesDir: hasImages ? imagesDir : null,
     extractor: 'docling',
+    warning: fallbackWarning,
   }
 }
 

@@ -31,9 +31,19 @@ export function registerPromptHandlers(): void {
           "Invalid projectRoot: required when files are selected.",
         );
       }
+      // A budget of 0, NaN, or a negative number is treated as "no budget" —
+      // the value comes from the renderer and must not be trusted to be
+      // sensible. Only a finite positive integer narrows the prompt.
+      const maxTokens =
+        typeof typed?.maxTokens === "number" &&
+        Number.isFinite(typed.maxTokens) &&
+        typed.maxTokens > 0
+          ? Math.floor(typed.maxTokens)
+          : undefined;
       return buildPrompt(
         root,
         typed.files.map((file) => requireString(file, "file path")),
+        maxTokens,
       );
     },
   );

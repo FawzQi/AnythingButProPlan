@@ -94,7 +94,7 @@ Reply using exactly the three delimited sections below, in this order, and nothi
 <plain prose explaining what changed and why, or the single word None>
 ======
 ===Debug===
-<commands to verify or reproduce the change, or the single word None>
+<executable terminal commands in a bash code block to verify the change, or the single word None>
 ======
 
 
@@ -171,7 +171,7 @@ If there is nothing to explain, the body is the single word \`None\`.
 
 After the closing \`======\` of the Explanation section, write a line reading \`===Debug===\`, then the debug content, then the final closing \`======\`.
 
-If the user needs to run commands to verify or reproduce the change, list them as fenced code blocks with the appropriate language tag (e.g. \`bash\`, \`powershell\`, \`sh\`). Each command block must be prefixed by a one-line description of what it does.
+If the user needs to run commands to verify or reproduce the change, list them inside a fenced code block tagged with \`bash\` (or \`sh\`), with one executable command per line in the order they should be executed (e.g. \`npm test\`, \`npm run build\`). Do not add inline comments, conversational text, or long-running interactive processes inside the command block. Any brief explanation must be written as prose outside the code block.
 
 If there are no debug commands, the body is the single word \`None\`.
 
@@ -189,13 +189,25 @@ export interface PromptFile {
   content: string
 }
 
+function safeFence(language: string, content: string): string {
+  const matches = content.match(/`{3,}/g);
+  let maxLen = 2;
+  if (matches) {
+    for (const m of matches) {
+      if (m.length > maxLen) maxLen = m.length;
+    }
+  }
+  const fence = '`'.repeat(maxLen + 1);
+  return `${fence}${language}\n${content}\n${fence}`;
+}
+
 export function renderPrompt(tree: string, files: PromptFile[]): string {
   const renderedFiles =
     files.length > 0
       ? files
           .map(
             (file) =>
-              `File: ${file.path}\n\n\`\`\`${file.language}\n${file.content}\n\`\`\`\n\n`,
+              `File: ${file.path}\n\n${safeFence(file.language, file.content)}\n\n`,
           )
           .join('') + '\n'
       : '\n'
@@ -223,14 +235,42 @@ ${OUTPUT_INSTRUCTIONS}`
 export async function buildPrompt(
   projectRoot: string,
   filePaths: string[],
+  maxTokens?: number,
 ): Promise<PromptBuildResult> {
   const files: PromptFile[] = []
   const unreadable: string[] = []
   const sensitiveFiles: string[] = []
+  const skippedByBudget: string[] = []
+
+  // Fixed cost of the prompt — output contract, section headers, empty tree.
+  // Measured once with no files in it so the per-file check does not
+  // re-tokenize the whole prompt for every candidate, which would make the
+  // loop O(files²) on a large selection. The tree grows a little per file,
+  // but the budget is a guard against context overflow, not an exact quota.
+  let spent = maxTokens !== undefined ? countTokens(renderPrompt('', [])) : 0
 
   for (const filePath of filePaths) {
     try {
       const content = await readTextFile(projectRoot, filePath)
+
+      // Budget check happens AFTER the read because a file that is too big
+      // to fit is still worth knowing about — it goes in `skippedByBudget`
+      // rather than `unreadable`, and the user can then choose to widen the
+      // budget or drop a different file. The check is against the file's own
+      // token cost, which is what actually grows the prompt; the surrounding
+      // scaffolding (tree, headers, output contract) is a fixed cost that
+      // would otherwise be charged to whichever file happened to be read
+      // next.
+      if (maxTokens !== undefined) {
+        const fileCost =
+          countTokens(content) + countTokens(`File: ${filePath}\n\n`)
+        if (spent + fileCost > maxTokens) {
+          skippedByBudget.push(filePath)
+          continue
+        }
+        spent += fileCost
+      }
+
       files.push({ path: filePath, language: languageForPath(filePath), content })
       // Report but never drop: the user asked for this file, so the prompt
       // includes it. The warning is the safety net, not silent exclusion.
@@ -253,5 +293,6 @@ export async function buildPrompt(
     fileCount: files.length,
     unreadable,
     sensitiveFiles,
+    skippedByBudget,
   }
 }

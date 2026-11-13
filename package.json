@@ -16,7 +16,8 @@
     "test:e2e": "playwright test",
     "lint": "eslint .",
     "package:win": "electron-vite build && electron-builder --win",
-    "package:linux": "electron-vite build && electron-builder --linux"
+    "package:linux": "electron-vite build && electron-builder --linux",
+    "eval": "ABPP_EVAL=1 vitest run tests/eval"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

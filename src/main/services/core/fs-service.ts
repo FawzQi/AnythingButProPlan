@@ -132,7 +132,8 @@ export function resolveWithinRoot(root: string, relativePath: string): string {
   }
 
   const normalizedRoot = path.resolve(root);
-  const absolute = path.resolve(normalizedRoot, relativePath);
+  const posixPath = toPosix(relativePath);
+  const absolute = path.resolve(normalizedRoot, posixPath);
   const withSeparator = normalizedRoot.endsWith(path.sep)
     ? normalizedRoot
     : normalizedRoot + path.sep;
@@ -145,7 +146,7 @@ export function resolveWithinRoot(root: string, relativePath: string): string {
   // accepts but Windows cannot create (CON, NUL, trailing dots/spaces, `:`).
   // eslint-disable-next-line no-control-regex
   const INVALID_FILENAME = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$|[<>:"/\\|?*\x00-\x1f\x7f]|[\s.]$/i;
-  for (const segment of relativePath.split("/")) {
+  for (const segment of posixPath.split("/")) {
     if (segment === "") continue;
     if (INVALID_FILENAME.test(segment)) {
       throw new Error(`Path is not portable across platforms: ${relativePath}`);
@@ -369,11 +370,21 @@ export async function scanDirectory(root: string): Promise<ScanResult> {
   };
 }
 
+export const MAX_TEXT_FILE_BYTES = 5 * 1024 * 1024;
+
 export async function readTextFile(
   root: string,
   relativePath: string,
+  maxBytes: number = MAX_TEXT_FILE_BYTES,
 ): Promise<string> {
-  return fs.readFile(resolveWithinRoot(root, relativePath), "utf8");
+  const absolute = resolveWithinRoot(root, relativePath);
+  const stats = await fs.stat(absolute);
+  if (stats.size > maxBytes) {
+    throw new Error(
+      `File ${relativePath} is too large (${(stats.size / (1024 * 1024)).toFixed(1)} MB; limit is ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`,
+    );
+  }
+  return fs.readFile(absolute, "utf8");
 }
 
 export async function fileExists(

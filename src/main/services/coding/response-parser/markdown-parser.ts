@@ -1,4 +1,5 @@
 import type { PatchBlock } from '@shared/types'
+import { LANGUAGE_EXTENSIONS } from './path-heuristics'
 import type { CodeBlock } from './types'
 
 // `[^\r\n]*` rather than `.*`: `.` does not match a carriage return, so a CRLF
@@ -83,6 +84,7 @@ export function extractCodeBlocks(raw: string): CodeBlock[] {
       precedingText: before.slice(-PRECEDING_WINDOW).join('\n'),
       rawBlock: raw.slice(lineStart, blockEnd),
       startLine: countNewlines(raw, lineStart) + 1,
+      unterminated: closing === null,
     })
 
     // Resume past this block so fences inside it are not re-scanned.
@@ -128,10 +130,16 @@ export function extractPlainBlocks(raw: string): CodeBlock[] {
     for (let i = 0; i < lines.length; i++) {
       const trimmed = lines[i].trim()
       if (trimmed === '') continue
-      // Check if this line looks like a language declaration
-      const langMatch = /^\(?([a-zA-Z0-9_+#-]+)\)?$/.exec(trimmed)
-      if (langMatch) {
-        language = langMatch[1]
+      // A bare identifier counts as a language declaration only when it
+      // names a known language; otherwise it is the first line of the body.
+      // Consuming any identifier-shaped line ate `return`, `import`,
+      // `const`, and every other first-line code start.
+      const explicitLang = trimmed.startsWith('(') && trimmed.endsWith(')')
+      const bare = trimmed.split('(').join('').split(')').join('')
+      const knownLang =
+        LANGUAGE_EXTENSIONS[bare.toLowerCase()] !== undefined
+      if (explicitLang || knownLang) {
+        language = bare
         codeStartIdx = i + 1
       } else {
         codeStartIdx = i
@@ -159,6 +167,7 @@ export function extractPlainBlocks(raw: string): CodeBlock[] {
       precedingText: `File: ${path}`,
       rawBlock: raw.slice(lineStart, nextIndex),
       startLine: countNewlines(raw, lineStart) + 1,
+      unterminated: false,
     })
     
     match = nextMatch
@@ -314,10 +323,30 @@ function stripOneTerminator(text: string): string {
   return text
 }
 
+/**
+ * Count newlines between position 0 and `upTo` in `raw`.
+ *
+ * The earlier version rescanned from 0 on every call, which is O(n) each and
+ * makes extraction O(blocks x length) — on a long response with many fenced
+ * blocks that dominated parse time. Both callers query monotonically
+ * increasing positions over the same string, so a cursor is enough: it
+ * remembers the last (string, position, count) and continues from there.
+ * Any out-of-order or different-string query falls back to a full scan, so
+ * the result is always correct, not merely fast on the happy path.
+ */
+let newlineScanRaw: string | null = null
+let newlineScanPos = 0
+let newlineScanCount = 0
+
 function countNewlines(raw: string, upTo: number): number {
-  let count = 0
-  for (let index = 0; index < upTo; index += 1) {
-    if (raw.charCodeAt(index) === 10) count += 1
+  if (raw !== newlineScanRaw || upTo < newlineScanPos) {
+    newlineScanRaw = raw
+    newlineScanPos = 0
+    newlineScanCount = 0
   }
-  return count
+  for (let index = newlineScanPos; index < upTo; index += 1) {
+    if (raw.charCodeAt(index) === 10) newlineScanCount += 1
+  }
+  newlineScanPos = Math.max(newlineScanPos, upTo)
+  return newlineScanCount
 }

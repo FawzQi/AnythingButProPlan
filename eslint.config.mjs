@@ -9,6 +9,7 @@ export default tseslint.config(
       'release/**',
       'node_modules/**',
       '.gitnexus/**',
+      '.claude/**',
       'tests/fixtures/**',
       'src/renderer/vite-env.d.ts',
     ],

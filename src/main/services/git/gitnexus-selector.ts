@@ -70,8 +70,12 @@ interface Candidate {
  * Git history
  * ------------------------------------------------------------------ */
 
+const GIT_LOG_TIMEOUT_MS = 15_000
+
 function runGitLog(root: string): Promise<string> {
   return new Promise((resolve) => {
+    let settled = false
+
     const child = spawn(
       'git',
       ['log', `-n${MAX_COMMITS}`, '--name-only', '--pretty=format:__C__%H'],
@@ -82,11 +86,29 @@ function runGitLog(root: string): Promise<string> {
       },
     )
     let stdout = ''
+
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      child.kill('SIGKILL')
+      resolve('')
+    }, GIT_LOG_TIMEOUT_MS)
+
     child.stdout?.on('data', (chunk) => {
       stdout += String(chunk)
     })
-    child.on('error', () => resolve(''))
-    child.on('close', (code) => resolve(code === 0 ? stdout : ''))
+    child.on('error', () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve('')
+    })
+    child.on('close', (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(code === 0 ? stdout : '')
+    })
   })
 }
 
@@ -239,6 +261,87 @@ interface HybridSearchResult {
 }
 
 /**
+ * Cache of the shallow BM25 index, keyed by project root.
+ *
+ * Building the index reads a skeleton and a 16 KB head of every file in the
+ * project, which on a large repository dominates the latency of a suggest
+ * call — and the file contents only change when the working tree changes.
+ * The key therefore pairs the root with the current HEAD commit and a
+ * signature of the scanned file list: a new commit or a re-scanned tree
+ * invalidates the entry, and unrelated suggests hit the cache.
+ *
+ * One entry per root is deliberate. A user works in one project at a time,
+ * so a multi-entry cache would only hold stale indexes; when they switch
+ * projects the old entry is replaced.
+ */
+const indexCache = new Map<
+  string,
+  { key: string; index: Bm25Index }
+>()
+
+function listSignature(filePaths: string[]): string {
+  // Cheap FNV-1a over the joined paths plus the length. The point is not
+  // cryptographic strength — it is to detect that the scanned tree has
+  // changed since the index was built.
+  let hash = 0x811c9dc5
+  for (const filePath of filePaths) {
+    for (let i = 0; i < filePath.length; i += 1) {
+      hash ^= filePath.charCodeAt(i)
+      hash = Math.imul(hash, 0x01000193) >>> 0
+    }
+    hash ^= 0x2f
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return `${filePaths.length}:${hash.toString(16)}`
+}
+
+function readGitHead(root: string): Promise<string> {
+  return new Promise((resolve) => {
+    let settled = false
+    const child = spawn('git', ['rev-parse', 'HEAD'], {
+      cwd: root,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    })
+    let stdout = ''
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      child.kill('SIGKILL')
+      resolve('')
+    }, 5_000)
+    child.stdout?.on('data', (chunk) => {
+      stdout += String(chunk)
+    })
+    child.on('error', () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve('')
+    })
+    child.on('close', (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(code === 0 ? stdout.trim() : '')
+    })
+  })
+}
+
+async function shallowIndex(
+  root: string,
+  filePaths: string[],
+): Promise<Bm25Index> {
+  const head = await readGitHead(root)
+  const key = `${head}|${listSignature(filePaths)}`
+  const cached = indexCache.get(root)
+  if (cached && cached.key === key) return cached.index
+  const index = await buildShallowIndex(root, filePaths)
+  indexCache.set(root, { key, index })
+  return index
+}
+
+/**
  * Run the GitNexus graph query and the BM25 index in parallel. The graph
  * query is skipped when the CLI is not on PATH; BM25 always runs, so a
  * missing tool degrades to keyword-only search rather than an empty result.
@@ -253,7 +356,7 @@ async function hybridSearch(
     gitnexusStatus.available
       ? queryGitNexus(root, terms, 60)
       : Promise.resolve<GitNexusHit[]>([]),
-    buildShallowIndex(root, filePaths),
+    shallowIndex(root, filePaths),
   ])
   const bm25Hits = index.search(terms.join(' '), 60)
   return {
@@ -365,14 +468,59 @@ function aggregateCandidates(input: {
     }
   }
 
-  return [...scores.entries()]
-    .map(([path, score]) => ({
+  return selectDiverse(
+    [...scores.entries()].map(([path, score]) => ({
       path,
       score,
       reasons: reasons.get(path) ?? [],
-    }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, CANDIDATE_LIMIT)
+    })),
+  )
+}
+
+/**
+ * Directory-diversity dampening over the ranked candidate list.
+ *
+ * Pure score order lets one folder crowd out the rest: ten files from
+ * `src/main/services/research/` can each outscore the single file in
+ * `src/renderer/` that the instruction actually needs. Each additional
+ * sibling already selected applies a 0.7× penalty on the next one, so the
+ * first few from any one directory survive at full strength and the tail
+ * of a hot folder falls behind a strong candidate elsewhere.
+ *
+ * Greedy rather than a global optimization: the common case (one hot folder
+ * plus a handful of stragglers) converges correctly, and the cost stays
+ * O(n²) on a list capped at CANDIDATE_LIMIT.
+ */
+function selectDiverse(ranked: Candidate[]): Candidate[] {
+  if (ranked.length <= 1) return ranked.slice(0, CANDIDATE_LIMIT)
+
+  const pool = [...ranked]
+  const selected: Candidate[] = []
+  const perDirectory = new Map<string, number>()
+  const DIR_PENALTY = 0.7
+
+  while (selected.length < CANDIDATE_LIMIT && pool.length > 0) {
+    let bestIndex = 0
+    let bestScore = Number.NEGATIVE_INFINITY
+    for (let i = 0; i < pool.length; i += 1) {
+      const entry = pool[i]
+      if (entry === undefined) continue
+      const dir = entry.path.slice(0, entry.path.lastIndexOf('/'))
+      const already = perDirectory.get(dir) ?? 0
+      const adjusted = entry.score * Math.pow(DIR_PENALTY, already)
+      if (adjusted > bestScore) {
+        bestScore = adjusted
+        bestIndex = i
+      }
+    }
+    const [chosen] = pool.splice(bestIndex, 1)
+    if (chosen === undefined) break
+    const dir = chosen.path.slice(0, chosen.path.lastIndexOf('/'))
+    perDirectory.set(dir, (perDirectory.get(dir) ?? 0) + 1)
+    selected.push(chosen)
+  }
+
+  return selected
 }
 
 /* ------------------------------------------------------------------ *
@@ -495,10 +643,17 @@ export async function suggestFilesGitNexusOnly(
 
   const purposes: Record<string, string> = {}
   for (const candidate of candidates) {
-    purposes[candidate.path] =
+    const base =
       candidate.reasons.length > 0
         ? `matched via ${candidate.reasons.join(', ')}`
         : 'candidate'
+    // The graph half of the recall is skipped when the `gitnexus` CLI is not
+    // on PATH, and the remaining BM25-only result is measurably weaker. The
+    // flag on the result alone is easy to miss; say so on every row so the
+    // user knows why the list looks thin.
+    purposes[candidate.path] = gitnexusMissing
+      ? `${base} (semantic only — gitnexus CLI not found)`
+      : base
   }
 
   return {
@@ -526,13 +681,17 @@ export async function suggestFilesGitNexusOnly(
 
 /**
  * Score at or above which a Jev answer is treated as "include". Anything
- * at 2 is flagged for human review; anything at 0–1 is dropped. The
+ * Jev scores are a probability-weighted position on a 0–3 rubric, so they
+ * are fractional. A `>= 3` include threshold therefore only fires on a
+ * perfectly certain maximum and the include bucket is unreachable in
+ * practice. The thresholds sit inside the rubric bands instead: 2.5 for
+ * include, 1.5 for review. The
  * thresholds live here rather than in the routing loop so the two numbers
  * are visible together and can be tuned in one place once the user has
  * validated them against their own repository's history.
  */
-const JEV_INCLUDE_SCORE = 3
-const JEV_REVIEW_SCORE = 2
+const JEV_INCLUDE_SCORE = 2.5
+const JEV_REVIEW_SCORE = 1.5
 /**
  * Confidence floor for automatic inclusion. Jev's confidences are
  * calibrated, so a 0.85 really does mean roughly 85% likely correct. A
@@ -847,6 +1006,8 @@ function getDefaultModel(providerId: AiProviderId): string {
       return 'deepseek-flash'
     case 'groq':
       return 'llama-3.3-70b-versatile'
+    case 'openai':
+      return 'gpt-4o'
     case 'openrouter':
       return 'z-ai/glm-5.2:free'
     case 'google':

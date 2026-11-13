@@ -101,11 +101,17 @@ export const googleProvider: AiProvider = {
   },
   async complete(input: CompleteInput): Promise<string> {
     const url = `${BASE}/${encodeURIComponent(input.model)}:generateContent?key=${encodeURIComponent(input.apiKey)}`;
+    const requested = input.maxTokens ?? 2048;
+    const isThinking = /gemini-[23]/.test(input.model.toLowerCase());
+    const maxOutputTokens = isThinking
+      ? Math.max(requested * 4, 8192)
+      : requested;
+
     const body = {
       systemInstruction: { parts: [{ text: input.system }] },
       contents: [{ role: "user", parts: [{ text: input.user }] }],
       generationConfig: {
-        maxOutputTokens: input.maxTokens ?? 2048,
+        maxOutputTokens,
         temperature: input.temperature ?? 0.1,
       },
     };
@@ -128,9 +134,17 @@ export const googleProvider: AiProvider = {
       );
     }
     const json = (await response.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      candidates?: Array<{
+        content?: { parts?: Array<{ text?: string; thought?: boolean }> };
+      }>;
     };
-    const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+    const parts = json.candidates?.[0]?.content?.parts ?? [];
+    const nonThoughtText = parts
+      .filter((p) => !p.thought && typeof p.text === "string")
+      .map((p) => p.text)
+      .join("");
+    const text = nonThoughtText !== "" ? nonThoughtText : parts[0]?.text;
+
     if (typeof text !== "string") {
       throw new Error(
         "Google AI Studio returned an unexpected response shape.",
@@ -220,38 +234,56 @@ export const googleProvider: AiProvider = {
         outputDimensionality: EMBEDDING_DIMENSIONS,
       })),
     };
-    let response: Response;
-    try {
-      response = await httpFetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    } catch (error) {
-      throw new Error(describeFetchError("Google AI Studio", error), {
-        cause: error,
-      });
+    const maxRetries = 3;
+    let attempt = 0;
+
+    while (true) {
+      attempt++;
+      let response: Response;
+      try {
+        response = await httpFetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } catch (error) {
+        throw new Error(describeFetchError("Google AI Studio", error), {
+          cause: error,
+        });
+      }
+
+      if (response.status === 429 && attempt <= maxRetries) {
+        const retryAfterHeader = response.headers.get("retry-after");
+        const delaySeconds = retryAfterHeader
+          ? parseInt(retryAfterHeader, 10) || 15
+          : attempt * 15;
+        await new Promise((resolve) =>
+          setTimeout(resolve, delaySeconds * 1000),
+        );
+        continue;
+      }
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(
+          `Google AI Studio embedding returned ${response.status}: ${
+            detail.slice(0, 300) || response.statusText
+          }`,
+        );
+      }
+      const json = (await response.json()) as {
+        embeddings?: Array<{ values?: number[] }>;
+      };
+      const vectors = (json.embeddings ?? []).map((entry) => entry.values ?? []);
+      if (vectors.length !== input.texts.length) {
+        // A short array would silently misalign every vector after the gap
+        // with the wrong chunk — worse than failing, because the index would
+        // look complete and retrieve the wrong passages.
+        throw new Error(
+          `Google AI Studio returned ${vectors.length} embeddings for ${input.texts.length} texts.`,
+        );
+      }
+      return vectors;
     }
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      throw new Error(
-        `Google AI Studio embedding returned ${response.status}: ${
-          detail.slice(0, 300) || response.statusText
-        }`,
-      );
-    }
-    const json = (await response.json()) as {
-      embeddings?: Array<{ values?: number[] }>;
-    };
-    const vectors = (json.embeddings ?? []).map((entry) => entry.values ?? []);
-    if (vectors.length !== input.texts.length) {
-      // A short array would silently misalign every vector after the gap
-      // with the wrong chunk — worse than failing, because the index would
-      // look complete and retrieve the wrong passages.
-      throw new Error(
-        `Google AI Studio returned ${vectors.length} embeddings for ${input.texts.length} texts.`,
-      );
-    }
-    return vectors;
   },
 };

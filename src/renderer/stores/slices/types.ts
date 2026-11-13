@@ -5,12 +5,14 @@ import type {
   AiSettingsSaveRequest,
   AiSuggestion,
   ApplyResult,
+  DebugCommandResult,
   FileNode,
   GitStatus,
   ParsedFile,
   ParseResult,
   RecentFolder,
 } from "@shared/types";
+import type { SessionSlice } from "./session-slice";
 
 export function parsedFileKey(file: ParsedFile, index: number): string {
   return file.path ?? `#${index}`;
@@ -65,11 +67,26 @@ export interface ResponseSlice {
   includes: Record<string, boolean>;
   applyResults: ApplyResult[] | null;
   applying: boolean;
+  debugRunning: boolean;
+  debugResults: DebugCommandResult[] | null;
+  debugLog: string;
+  debugActiveCommandIndex: number | null;
+  /**
+   * Opt-in, per app session: skip the confirmation dialog before running the
+   * parsed `===Debug===` commands. Off by default. The toggle lives in the
+   * debug panel, next to the command list, so enabling it is a deliberate act
+   * taken while looking at the commands.
+   */
+  debugAutoRun: boolean;
 
   setResponse: (raw: string) => Promise<void>;
   setParsedPath: (index: number, path: string) => void;
   toggleInclude: (key: string, included: boolean) => void;
   applySelected: () => Promise<void>;
+  setDebugAutoRun: (enabled: boolean) => void;
+  runDebugCommands: () => Promise<void>;
+  killDebugCommands: () => Promise<void>;
+  clearDebug: () => void;
 }
 
 export interface EditorSlice {
@@ -128,4 +145,5 @@ export type AppStoreState = ProjectSlice &
   ResponseSlice &
   EditorSlice &
   GitSlice &
-  SettingsSlice;
+  SettingsSlice &
+  SessionSlice;

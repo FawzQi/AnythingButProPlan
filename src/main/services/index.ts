@@ -6,7 +6,6 @@ export * from "./core/cancellation";
 export * from "./coding/prompt-builder";
 export * from "./coding/apply-engine";
 export * from "./coding/codebase-map";
-export * from "./coding/file-selector";
 export * from "./coding/json-salvage";
 export * from "./coding/response-parser";
 
@@ -28,3 +27,12 @@ export * from "./ai/ai-providers";
 export * from "./ai/image-analyzer";
 export * from "./ai/llm-ranker";
 export * from "./ai/jev";
+
+export * from "./session/session-store";
+export * from "./session/session-engine";
+export * from "./session/response-protocol";
+export * from "./session/context-budget";
+export * from "./session/verification";
+export * from "./session/compaction";
+export * from "./session/output-guard";
+export * from "./session/turn-builder";

@@ -96,3 +96,48 @@ describe("VectorStore", () => {
     await expect(reloaded.load(dir)).rejects.toThrow(/inconsistent/i);
   });
 });
+
+describe("document filter ordering", () => {
+  // The bug: filtering after `query`'s top-k cut lets an excluded document
+  // occupy every candidate slot, so a document-scoped search returns nothing
+  // even though allowed chunks exist.
+  function chunk(document: string, id: string): Chunk {
+    return { document, id, text: id, headingPath: "", index: 0, tokens: 1 };
+  }
+
+  it("returns allowed hits even when the excluded document dominates", () => {
+    const store = new VectorStore();
+    const chunks: Chunk[] = [];
+    const vectors: number[][] = [];
+    // 30 chunks from the excluded document, all close to the query vector.
+    for (let i = 0; i < 30; i += 1) {
+      chunks.push(chunk("excluded.md", `ex-${i}`));
+      vectors.push([1, 0]);
+    }
+    // One allowed chunk, further away.
+    chunks.push(chunk("allowed.md", "keep"));
+    vectors.push([0.6, 0.8]);
+    store.add(chunks, vectors);
+
+    const hits = store.query([1, 0], 5, (document) => document === "allowed.md");
+
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.chunk.document).toBe("allowed.md");
+  });
+
+  it("still applies the limit to the filtered set", () => {
+    const store = new VectorStore();
+    const chunks: Chunk[] = [];
+    const vectors: number[][] = [];
+    for (let i = 0; i < 10; i += 1) {
+      chunks.push(chunk("doc.md", `c-${i}`));
+      vectors.push([1 - i * 0.01, i * 0.01]);
+    }
+    store.add(chunks, vectors);
+
+    const hits = store.query([1, 0], 3);
+
+    expect(hits).toHaveLength(3);
+    expect(hits.map((hit) => hit.chunk.id)).toEqual(["c-0", "c-1", "c-2"]);
+  });
+});

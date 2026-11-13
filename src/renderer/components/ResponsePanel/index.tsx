@@ -5,6 +5,7 @@ import { useAppStore, parsedFileKey } from "../../stores/app-store";
 import { useDebouncedEffect } from "../../lib/hooks";
 import { Banner, Button, Panel } from "../../lib/ui";
 import { DiffViewer } from "../DiffViewer";
+import { DebugMonitor } from "./DebugMonitor";
 
 const SOURCE_LABELS: Record<string, string> = {
   "file-header": "File: header",
@@ -17,6 +18,7 @@ const SOURCE_LABELS: Record<string, string> = {
 
 export function ResponsePanel({ width }: { width: number }): ReactElement {
   const projectRoot = useAppStore((state) => state.projectRoot);
+  const mode = useAppStore((state) => state.aiSettings?.mode ?? "coding");
   const rawResponse = useAppStore((state) => state.rawResponse);
   const parseResult = useAppStore((state) => state.parseResult);
   const includes = useAppStore((state) => state.includes);
@@ -26,8 +28,14 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
   const setParsedPath = useAppStore((state) => state.setParsedPath);
   const toggleInclude = useAppStore((state) => state.toggleInclude);
   const applySelected = useAppStore((state) => state.applySelected);
+  const debugRunning = useAppStore((state) => state.debugRunning);
+  const debugLog = useAppStore((state) => state.debugLog);
+  const debugAutoRun = useAppStore((state) => state.debugAutoRun);
+  const setDebugAutoRun = useAppStore((state) => state.setDebugAutoRun);
+  const runDebugCommands = useAppStore((state) => state.runDebugCommands);
 
   const [draft, setDraft] = useState(rawResponse);
+  const [showMonitor, setShowMonitor] = useState(false);
   const [diffTarget, setDiffTarget] = useState<{
     path: string;
     content: string;
@@ -56,6 +64,22 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
     300,
     [draft],
   );
+
+  // Text pasted while in research mode was deliberately left unparsed. If the
+  // user then switches to coding mode, that text is now a candidate patch and
+  // has to be read — otherwise the panel sits on "Nothing parsed yet" with a
+  // full response in the box.
+  useEffect(() => {
+    if (mode !== "coding") return;
+    if (parseResult !== null || rawResponse.trim() === "") return;
+    void setResponse(rawResponse);
+  }, [mode, rawResponse, parseResult, setResponse]);
+
+  useEffect(() => {
+    if (debugRunning) {
+      setShowMonitor(true);
+    }
+  }, [debugRunning]);
 
   useEffect(() => {
     if (!projectRoot || !parseResult) return;
@@ -91,9 +115,11 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
   ).length;
 
   const deleteCount = includable.filter(
-    (file) => file.kind === "delete" && includes[parsedFileKey(file, 0)] === true,
+    (file, index) =>
+      file.kind === "delete" && includes[parsedFileKey(file, index)] === true,
   ).length;
   const writeCount = selectedCount - deleteCount;
+  const debugCommands = parseResult?.debugCommands ?? [];
 
   const confirmApply = async (): Promise<void> => {
     const lines: string[] = [];
@@ -128,13 +154,37 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
           >
             Clear
           </Button>
-          <Button
-            variant="primary"
-            onClick={() => void confirmApply()}
-            disabled={applying || selectedCount === 0}
-          >
-            {applying ? "Applying…" : `Apply ${selectedCount} file(s)`}
-          </Button>
+          {/* Apply and Run Debug act on the parsed file entries. In research
+              mode the response is a cited answer, so there is nothing to
+              write and no commands to run; showing the buttons would offer
+              actions the mode cannot honour. */}
+          {mode === "coding" ? (
+            <>
+              <Button
+                variant="primary"
+                onClick={() => void confirmApply()}
+                disabled={applying || selectedCount === 0}
+              >
+                {applying ? "Applying…" : `Apply ${selectedCount} file(s)`}
+              </Button>
+              {debugCommands.length > 0 ? (
+                <Button
+                  onClick={() => {
+                    setShowMonitor(true);
+                    void runDebugCommands();
+                  }}
+                  disabled={debugRunning || !projectRoot}
+                  title={
+                    !projectRoot
+                      ? "Open a project to run commands"
+                      : "Run parsed debug commands"
+                  }
+                >
+                  {debugRunning ? "Running…" : "Run Debug"}
+                </Button>
+              ) : null}
+            </>
+          ) : null}
         </>
       }
     >
@@ -148,7 +198,12 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
         />
 
         <div className="min-h-0 flex-1 overflow-auto">
-          {parseResult === null ? (
+          {mode !== "coding" ? (
+            <p className="p-3 text-xs text-slate-500">
+              The answer is above. Research replies are prose and citations —
+              there is no file list to apply.
+            </p>
+          ) : parseResult === null ? (
             <p className="p-3 text-xs text-slate-500">Nothing parsed yet.</p>
           ) : (
             <div className="flex flex-col gap-2 p-3">
@@ -279,6 +334,71 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
                 </tbody>
               </table>
 
+              {debugCommands.length > 0 ? (
+                <div className="flex flex-col gap-2 rounded border border-[#2c3038] bg-[#12141a] p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-300">
+                        Debug Commands
+                      </span>
+                      <span className="rounded bg-[#2a2f38] px-1.5 py-0.5 text-[11px] text-slate-400">
+                        {debugCommands.length}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {debugLog ? (
+                        <Button
+                          variant="ghost"
+                          onClick={() => setShowMonitor((prev) => !prev)}
+                        >
+                          {showMonitor ? "Hide Monitor" : "View Monitor"}
+                        </Button>
+                      ) : null}
+                      <Button
+                        variant="primary"
+                        onClick={() => {
+                          setShowMonitor(true);
+                          void runDebugCommands();
+                        }}
+                        disabled={debugRunning || !projectRoot}
+                        title={
+                          !projectRoot
+                            ? "Open a project to run commands"
+                            : "Run debug commands one by one"
+                        }
+                      >
+                        {debugRunning ? "Running…" : "Run Debug"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    {debugCommands.map((cmd, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center gap-2 rounded border border-[#232730] bg-[#181a20] px-2.5 py-1 font-mono text-xs text-slate-300"
+                      >
+                        <span className="font-semibold text-emerald-400">$</span>
+                        <span className="truncate select-all">{cmd}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <label className="flex items-center gap-2 text-[11px] text-slate-400">
+                    <input
+                      type="checkbox"
+                      checked={debugAutoRun}
+                      onChange={(event) => setDebugAutoRun(event.target.checked)}
+                    />
+                    Run without asking for confirmation (this app session only)
+                  </label>
+                </div>
+              ) : null}
+
+              {showMonitor ? (
+                <DebugMonitor onClose={() => setShowMonitor(false)} />
+              ) : null}
+
               {applyResults ? (
                 <div className="flex flex-col gap-1">
                   <Banner
@@ -288,7 +408,22 @@ export function ResponsePanel({ width }: { width: number }): ReactElement {
                         : "success"
                     }
                   >
-                    {summarize(applyResults)}
+                    <div className="flex items-center justify-between w-full">
+                      <span>{summarize(applyResults)}</span>
+                      {debugCommands.length > 0 ? (
+                        <Button
+                          variant="ghost"
+                          className="text-xs px-2 py-0.5"
+                          onClick={() => {
+                            setShowMonitor(true);
+                            void runDebugCommands();
+                          }}
+                          disabled={debugRunning || !projectRoot}
+                        >
+                          Run Debug
+                        </Button>
+                      ) : null}
+                    </div>
                   </Banner>
                   <ul className="font-mono text-xs text-slate-400">
                     {applyResults.map((result) => (

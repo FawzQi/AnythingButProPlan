@@ -17,6 +17,12 @@ interface ParsedFileCommon {
   language: string | null;
   pathSource: PathSource;
   content: string;
+  /**
+   * The code fence enclosing this entry was never closed, which means the
+   * response was cut off. The content is shown but must not be written
+   * without the user's explicit say-so.
+   */
+  truncated?: boolean;
 }
 
 /**
@@ -43,6 +49,7 @@ export interface ParseResult {
   files: ParsedFile[];
   strategy: ParseStrategy;
   warnings: string[];
+  debugCommands: string[];
 }
 
 export interface ApplyFileInput {
@@ -59,6 +66,16 @@ export interface ApplyFileInput {
 export interface ApplyRequest {
   projectRoot: string;
   files: ApplyFileInput[];
+  /**
+   * All-or-nothing. Every entry is resolved against the disk first; if any
+   * entry cannot be applied, nothing is written and every result explains the
+   * blocker. Used by the session loop, where a half-applied batch would leave
+   * the turn in a state neither the model nor the verifier understands.
+   *
+   * Defaults to false, which keeps the interactive panel's behaviour: each
+   * file is attempted independently and reported on its own.
+   */
+  atomic?: boolean;
 }
 
 export interface ApplyResult {

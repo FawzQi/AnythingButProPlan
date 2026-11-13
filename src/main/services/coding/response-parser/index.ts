@@ -32,6 +32,7 @@ function toParsedFile(
     language: block.language,
     pathSource: source,
     content: block.content,
+    truncated: block.unterminated,
   }
   if (path === null) {
     return { ...common, kind: 'unresolved' as const, path: null }
@@ -166,6 +167,112 @@ function filesSection(raw: string): string {
   return match ? raw.slice(0, match.index) : raw
 }
 
+const DEBUG_SECTION_DELIMITED_OPEN =
+  /^[ \t]*={2,}\s*Debug\s*={2,}[ \t]*(?:\r?\n|$)/im
+
+const DEBUG_SECTION_HEADING_OPEN =
+  /^[ \t]*#{2,6}[^\r\n]*\bDebug\b[^\r\n]*(?:\r?\n|$)/im
+
+const NEXT_HEADING = /^[ \t]*#{2,6}[^\r\n]*\b[A-Za-z]+\b/m
+
+/**
+ * Extract executable debug commands from the Debug section of an AI response.
+ *
+ * Supports both the modern delimited `===Debug===` format and the legacy
+ * `## Debug` heading format. Parses commands from fenced code blocks (e.g.
+ * bash, sh, cmd, powershell) line-by-line, stripping comment lines and leading
+ * shell prompt signs ('$ ').
+ */
+export function extractDebugCommands(raw: string): string[] {
+  let sectionBody: string | null = null
+
+  const delimited = DEBUG_SECTION_DELIMITED_OPEN.exec(raw)
+  if (delimited) {
+    const rest = raw.slice(delimited.index + delimited[0].length)
+    const close = SECTION_CLOSE.exec(rest)
+    sectionBody = close ? rest.slice(0, close.index) : rest
+  } else {
+    const heading = DEBUG_SECTION_HEADING_OPEN.exec(raw)
+    if (heading) {
+      const rest = raw.slice(heading.index + heading[0].length)
+      const next = NEXT_HEADING.exec(rest)
+      sectionBody = next ? rest.slice(0, next.index) : rest
+    }
+  }
+
+  if (!sectionBody) return []
+
+  const trimmedBody = sectionBody.trim()
+  if (trimmedBody === '' || /^none\.?$/i.test(trimmedBody)) {
+    return []
+  }
+
+  const commands: string[] = []
+  const fenceRegex = /```(?:[a-zA-Z0-9_-]+)?\s*\r?\n([\s\S]*?)```/g
+
+  // Strategy 1: Fenced code blocks in the debug section
+  let match = fenceRegex.exec(sectionBody)
+  let foundFences = false
+  while (match) {
+    foundFences = true
+    const blockContent = match[1]
+    const lines = blockContent.split(/\r?\n/)
+    for (const line of lines) {
+      const clean = line.trim()
+      if (
+        clean === '' ||
+        clean.startsWith('#') ||
+        clean.startsWith('//') ||
+        /^none\.?$/i.test(clean)
+      ) {
+        continue
+      }
+      const command = clean.replace(/^\$\s+/, '').trim()
+      if (command.length > 0) {
+        commands.push(command)
+      }
+    }
+    match = fenceRegex.exec(sectionBody)
+  }
+
+  if (foundFences) {
+    return commands
+  }
+
+  // Strategy 2: Fallback to lines with `$ ...` or command lines if no fences
+  const lines = sectionBody.split(/\r?\n/)
+  for (const line of lines) {
+    const clean = line.trim()
+    if (
+      clean === '' ||
+      clean.startsWith('#') ||
+      clean.startsWith('//') ||
+      /^none\.?$/i.test(clean) ||
+      clean.endsWith(':')
+    ) {
+      continue
+    }
+    if (clean.startsWith('$ ')) {
+      const command = clean.slice(2).trim()
+      if (command.length > 0) {
+        commands.push(command)
+      }
+      continue
+    }
+    if (
+      !/^(to\s|you\s|run\s|first\s|then\s|please\s|after\s|if\s|note:)/i.test(
+        clean,
+      ) &&
+      !clean.includes(' should ') &&
+      !clean.includes(' would ')
+    ) {
+      commands.push(clean)
+    }
+  }
+
+  return commands
+}
+
 /**
  * Any `<<<<<<< SEARCH` marker on a line by itself switches the whole response
  * into the patch dialect. The prompt asks for one shape or the other, not a
@@ -207,13 +314,25 @@ function renderPatches(patches: PatchBlock[]): string {
 export function parseResponse(raw: string): ParseResult {
   const warnings: string[] = []
   const scan = filesSection(raw)
+  const debugCommands = extractDebugCommands(raw)
+
+  // An unclosed fence means the chat or the model stopped mid-response. Say
+  // so up front: the affected entries are marked `truncated` and the applier
+  // refuses the obvious size collapse, but the user should know why.
+  const openFences = extractCodeBlocks(raw).filter((block) => block.unterminated)
+  if (openFences.length > 0) {
+    const lines = openFences.map((block) => block.startLine).join(", ")
+    warnings.push(
+      `A code block starting at line ${lines} was never closed. The response looks cut off — check the end of it before applying.`,
+    )
+  }
 
   // Deletes can appear alongside any of the file-entry shapes — the output
   // contract lets the AI interleave `Delete:` lines with `File:` entries in
   // any order. They are extracted up front and merged into whichever branch
   // produces the file list, so a response that deletes one file and edits
   // another comes back as a single coherent set of entries.
-  const deleteEntries: ParsedFile[] = extractDeletePaths(scan)
+  const deleteCandidates: ParsedFile[] = extractDeletePaths(scan)
     .map((candidate) => normalizePath(candidate))
     .filter((path): path is string => path !== null)
     .map(
@@ -226,6 +345,28 @@ export function parseResponse(raw: string): ParseResult {
         rawBlock: `Delete: ${path}`,
       }),
     )
+
+  /**
+   * Deletes are only meaningful for paths that nothing else in the response
+   * writes. A model that both `Delete:` and `File:` the same path means the
+   * later form (a full rewrite, or a patch) is the real intent — appending
+   * the delete first would remove the file and then write it, which in the
+   * non-atomic applier is a delete-then-create that loses history and any
+   * concurrent file state. The write wins; the delete is dropped.
+   */
+  const withoutDeleteCollisions = (
+    writes: ParsedFile[],
+  ): ParsedFile[] => {
+    if (deleteCandidates.length === 0) return []
+    const written = new Set(
+      writes
+        .map((entry) => entry.path)
+        .filter((path): path is string => path !== null),
+    )
+    return deleteCandidates.filter(
+      (entry) => entry.path !== null && !written.has(entry.path),
+    )
+  }
 
   if (HAS_PATCH_MARKERS.test(scan)) {
     const sections = extractSearchReplaceSections(scan)
@@ -299,16 +440,21 @@ export function parseResponse(raw: string): ParseResult {
       // the prose, but no real patch sections — the response is a
       // markdown result in everything but name.
       return {
-        files: [...deleteEntries, ...fullContentFiles, ...usable],
+        files: [
+          ...withoutDeleteCollisions([...fullContentFiles, ...usable]),
+          ...fullContentFiles,
+          ...usable,
+        ],
         strategy: usable.length > 0 ? 'patch' : 'markdown',
         warnings,
+        debugCommands,
       }
     }
 
     // Nothing usable in the patch dialect; fall through so a malformed
     // response still gets a chance through the fence-based strategies. The
     // delete entries, if any, stay in the pipeline.
-    if (deleteEntries.length === 0) {
+    if (deleteCandidates.length === 0) {
       warnings.push(
         'Found SEARCH/REPLACE markers but no section carried a usable path; falling back to full-content parsing.',
       )
@@ -327,15 +473,17 @@ export function parseResponse(raw: string): ParseResult {
         `${dropped} code block(s) carried no file path and were skipped as illustrative snippets.`,
       )
     }
+    const markdownFiles = resolved.map((entry) =>
+      toParsedFile(entry.block, entry.hint.path, entry.hint.source),
+    )
     return {
       files: [
-        ...deleteEntries,
-        ...resolved.map((entry) =>
-          toParsedFile(entry.block, entry.hint.path, entry.hint.source),
-        ),
+        ...withoutDeleteCollisions(markdownFiles),
+        ...markdownFiles,
       ],
       strategy: 'markdown',
       warnings,
+      debugCommands,
     }
   }
 
@@ -356,22 +504,27 @@ export function parseResponse(raw: string): ParseResult {
       if (rejected > 0) {
         warnings.push(`${rejected} plain text block(s) had a missing or unusable path and were dropped.`)
       }
-      return { files: [...deleteEntries, ...usable], strategy: 'plaintext', warnings }
+      return {
+        files: [...withoutDeleteCollisions(usable), ...usable],
+        strategy: 'plaintext',
+        warnings,
+        debugCommands,
+      }
     }
   }
 
   // A response that contains only deletes is a legitimate result: the user
   // asked for cleanup and the model produced nothing but the list. Return it
   // under its own strategy so the UI can label it clearly.
-  if (deleteEntries.length > 0) {
-    return { files: deleteEntries, strategy: 'delete', warnings }
+  if (deleteCandidates.length > 0) {
+    return { files: deleteCandidates, strategy: 'delete', warnings, debugCommands }
   }
 
   // Strategy 4 — hand everything to the user. Nothing resolved, so nothing is
   // dropped: every block reaches the UI for the user to place by hand.
   if (blocks.length === 0) {
     warnings.push('No fenced code blocks found in the response.')
-    return { files: [], strategy: 'user-assisted', warnings }
+    return { files: [], strategy: 'user-assisted', warnings, debugCommands }
   }
   warnings.push(
     `${blocks.length} code block(s) had no resolvable path and need a target file.`,
@@ -380,5 +533,6 @@ export function parseResponse(raw: string): ParseResult {
     files: hints.map((entry) => toParsedFile(entry.block, null, entry.hint.source)),
     strategy: 'user-assisted',
     warnings,
+    debugCommands,
   }
 }

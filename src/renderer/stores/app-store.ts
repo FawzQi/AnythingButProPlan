@@ -5,6 +5,7 @@ import { createResponseSlice } from "./slices/response-slice";
 import { createEditorSlice } from "./slices/editor-slice";
 import { createGitSlice } from "./slices/git-slice";
 import { createSettingsSlice } from "./slices/settings-slice";
+import { createSessionSlice } from "./slices/session-slice";
 import type { AppStoreState, EditorTab } from "./slices/types";
 import { parsedFileKey } from "./slices/types";
 
@@ -19,4 +20,5 @@ export const useAppStore = create<AppStoreState>()((...a) => ({
   ...createEditorSlice(...a),
   ...createGitSlice(...a),
   ...createSettingsSlice(...a),
+  ...createSessionSlice(...a),
 }));

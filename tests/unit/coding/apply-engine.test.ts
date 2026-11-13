@@ -160,3 +160,126 @@ describe("computeDiff", () => {
     });
   });
 });
+
+describe("size-collapse guard", () => {
+  it("refuses a full rewrite that keeps less than 40% of a large file", async () => {
+    const original = Array.from({ length: 100 }, (_, i) => `export const v${i} = ${i};`).join("\n") + "\n";
+    await fs.writeFile(path.join(root, "big.ts"), original, "utf8");
+
+    const truncated = "export const v0 = 0;\nexport const v1 = 1;\n";
+
+    const results = await applyFiles({
+      projectRoot: root,
+      files: [{ path: "big.ts", content: truncated }],
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.status).toBe("failed");
+    expect(results[0]?.error).toContain("cut off");
+    // The file on disk is untouched.
+    await expect(fs.readFile(path.join(root, "big.ts"), "utf8")).resolves.toBe(original);
+  });
+
+  it("allows a modest shrink of a large file", async () => {
+    const original = Array.from({ length: 100 }, (_, i) => `export const v${i} = ${i};`).join("\n") + "\n";
+    await fs.writeFile(path.join(root, "big.ts"), original, "utf8");
+
+    const rewritten = original.split("\n").slice(0, 70).join("\n");
+
+    const results = await applyFiles({
+      projectRoot: root,
+      files: [{ path: "big.ts", content: rewritten }],
+    });
+
+    expect(results[0]?.status).toBe("overwritten");
+  });
+
+  it("does not guard files below the line threshold", async () => {
+    await fs.writeFile(path.join(root, "small.ts"), "a\nb\nc\nd\n", "utf8");
+
+    const results = await applyFiles({
+      projectRoot: root,
+      files: [{ path: "small.ts", content: "a\n" }],
+    });
+
+    expect(results[0]?.status).toBe("overwritten");
+    await expect(fs.readFile(path.join(root, "small.ts"), "utf8")).resolves.toBe("a\n");
+  });
+});
+
+describe("applyFiles atomic mode", () => {
+  it("writes nothing when any entry is invalid", async () => {
+    await fs.writeFile(path.join(root, "good.ts"), "export const g = 1\n", "utf8");
+
+    const results = await applyFiles({
+      projectRoot: root,
+      atomic: true,
+      files: [
+        { path: "good.ts", content: "export const g = 2\n" },
+        { path: "missing.ts", content: "export const m = 1\n", patches: [{ search: "x", replace: "y" }] },
+      ],
+    });
+
+    // The good entry is reported as skipped, not written.
+    const good = results.find((result) => result.path === "good.ts");
+    expect(good?.status).toBe("skipped");
+    await expect(fs.readFile(path.join(root, "good.ts"), "utf8")).resolves.toBe(
+      "export const g = 1\n",
+    );
+
+    // The missing target is the real failure.
+    const missing = results.find((result) => result.path === "missing.ts");
+    expect(missing?.status).toBe("failed");
+    expect(missing?.error).toContain("does not exist");
+  });
+
+  it("writes every entry when all of them resolve", async () => {
+    const results = await applyFiles({
+      projectRoot: root,
+      atomic: true,
+      files: [
+        { path: "a.ts", content: "export const a = 1\n" },
+        { path: "b.ts", content: "export const b = 1\n" },
+      ],
+    });
+
+    expect(results.map((result) => result.status)).toEqual(["created", "created"]);
+    await expect(fs.readFile(path.join(root, "a.ts"), "utf8")).resolves.toBe("export const a = 1\n");
+    await expect(fs.readFile(path.join(root, "b.ts"), "utf8")).resolves.toBe("export const b = 1\n");
+  });
+
+  it("applies patches in memory and writes the patched result", async () => {
+    await fs.writeFile(path.join(root, "p.ts"), "const a = 1;\nconst b = 2;\n", "utf8");
+
+    const results = await applyFiles({
+      projectRoot: root,
+      atomic: true,
+      files: [
+        { path: "p.ts", content: "", patches: [{ search: "const a = 1;", replace: "const a = 9;" }] },
+      ],
+    });
+
+    expect(results[0]?.status).toBe("patched");
+    await expect(fs.readFile(path.join(root, "p.ts"), "utf8")).resolves.toBe(
+      "const a = 9;\nconst b = 2;\n",
+    );
+  });
+
+  it("blocks a size-collapse entry before writing anything else", async () => {
+    const big = Array.from({ length: 80 }, (_, i) => `export const v${i} = ${i};`).join("\n") + "\n";
+    await fs.writeFile(path.join(root, "big.ts"), big, "utf8");
+
+    const results = await applyFiles({
+      projectRoot: root,
+      atomic: true,
+      files: [
+        { path: "small.ts", content: "export const s = 1\n" },
+        { path: "big.ts", content: "export const v0 = 0;\n" },
+      ],
+    });
+
+    expect(results.find((result) => result.path === "small.ts")?.status).toBe("skipped");
+    await expect(fs.readFile(path.join(root, "big.ts"), "utf8")).resolves.toBe(big);
+    await expect(fs.access(path.join(root, "small.ts"))).rejects.toThrow();
+  });
+});
